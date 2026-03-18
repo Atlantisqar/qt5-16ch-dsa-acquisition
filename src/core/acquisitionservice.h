@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "core/dsa16chdeviceservice.h"
 #include "core/multichanneldatastore.h"

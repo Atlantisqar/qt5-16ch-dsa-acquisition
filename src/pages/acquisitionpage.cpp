@@ -5,7 +5,51 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QSizePolicy>
+#include <QStyle>
 #include <QVBoxLayout>
+
+namespace {
+
+QString metricValueText(bool enabled) {
+    return enabled ? QStringLiteral("\u8fd0\u884c\u4e2d") : QStringLiteral("\u5df2\u505c\u6b62");
+}
+
+QString overflowText(bool overflow) {
+    return overflow ? QStringLiteral("\u662f") : QStringLiteral("\u5426");
+}
+
+void refreshWidgetStyle(QWidget* widget) {
+    if (widget == nullptr) {
+        return;
+    }
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+    widget->update();
+}
+
+QFrame* createStatusMetricCard(QWidget* parent, QLabel** valueLabel) {
+    QFrame* card = new QFrame(parent);
+    card->setObjectName("StatusMetricCard");
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
+    QVBoxLayout* layout = new QVBoxLayout(card);
+    layout->setContentsMargins(12, 10, 12, 10);
+    layout->setSpacing(0);
+
+    QLabel* contentLabel = new QLabel(card);
+    contentLabel->setObjectName("MetricValue");
+    contentLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    contentLabel->setWordWrap(true);
+
+    layout->addWidget(contentLabel);
+
+    if (valueLabel != nullptr) {
+        *valueLabel = contentLabel;
+    }
+    return card;
+}
+
+}  // namespace
 
 AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* parent)
     : QWidget(parent), m_dataStore(dataStore) {
@@ -30,26 +74,36 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
     QFrame* statusCard = new QFrame(leftPanel);
     statusCard->setObjectName("CardWidget");
     ThemeHelper::applyCardShadow(statusCard);
+    statusCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    statusCard->setFixedHeight(84);
     QHBoxLayout* statusLayout = new QHBoxLayout(statusCard);
-    statusLayout->setContentsMargins(16, 12, 16, 12);
-    statusLayout->setSpacing(12);
+    statusLayout->setContentsMargins(10, 10, 10, 10);
+    statusLayout->setSpacing(8);
 
-    m_acquisitionStatusLabel = new QLabel(QStringLiteral("采集状态：已停止"), statusCard);
-    m_plotStatusLabel = new QLabel(QStringLiteral("绘图状态：已停止"), statusCard);
-    m_overflowLabel = new QLabel(QStringLiteral("溢出：否"), statusCard);
-    m_bufferPointLabel = new QLabel(QStringLiteral("缓存点数/通道：0"), statusCard);
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_acquisitionStatusLabel));
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_plotStatusLabel));
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_overflowLabel));
 
-    QLabel* statusLabels[] = {
-        m_acquisitionStatusLabel,
-        m_plotStatusLabel,
-        m_overflowLabel,
-        m_bufferPointLabel};
-    for (QLabel* label : statusLabels) {
-        label->setAlignment(Qt::AlignCenter);
-        label->setWordWrap(true);
-        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        statusLayout->addWidget(label, 1);
-    }
+    QFrame* bufferCard = new QFrame(statusCard);
+    bufferCard->setObjectName("StatusMetricCard");
+    bufferCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    QVBoxLayout* bufferLayout = new QVBoxLayout(bufferCard);
+    bufferLayout->setContentsMargins(12, 10, 12, 10);
+    bufferLayout->setSpacing(4);
+
+    m_bufferPointBar = new QProgressBar(bufferCard);
+    m_bufferPointBar->setObjectName("BufferProgressBar");
+    m_bufferPointBar->setRange(0, static_cast<int>(dsa::kMaxPointPerChannel));
+    m_bufferPointBar->setTextVisible(false);
+    m_bufferPointBar->setFixedHeight(10);
+
+    m_bufferPointValueLabel = new QLabel(bufferCard);
+    m_bufferPointValueLabel->setObjectName("MetricValue");
+    m_bufferPointValueLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    bufferLayout->addWidget(m_bufferPointBar);
+    bufferLayout->addWidget(m_bufferPointValueLabel);
+    statusLayout->addWidget(bufferCard, 2);
+
     leftLayout->addWidget(statusCard, 0);
 
     QFrame* selectorCard = new QFrame(this);
@@ -75,25 +129,36 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
             &AcquisitionPage::channelsSelectionChanged);
 
     m_waveformGrid->setActiveChannels(m_selectorWidget->selectedChannels());
+
+    setAcquisitionRunning(false);
+    setPlottingRunning(false);
+    setOverflow(false);
+    setBufferPointCount(0);
 }
 
 void AcquisitionPage::setAcquisitionRunning(bool running) {
     m_acquisitionStatusLabel->setText(
-        QStringLiteral("采集状态：%1").arg(running ? QStringLiteral("运行中") : QStringLiteral("已停止")));
+        QStringLiteral("\u91c7\u96c6\uff1a%1").arg(metricValueText(running)));
 }
 
 void AcquisitionPage::setPlottingRunning(bool running) {
     m_plotStatusLabel->setText(
-        QStringLiteral("绘图状态：%1").arg(running ? QStringLiteral("运行中") : QStringLiteral("已停止")));
+        QStringLiteral("\u7ed8\u56fe\uff1a%1").arg(metricValueText(running)));
 }
 
 void AcquisitionPage::setOverflow(bool overflow) {
     m_overflowLabel->setText(
-        QStringLiteral("溢出：%1").arg(overflow ? QStringLiteral("是") : QStringLiteral("否")));
+        QStringLiteral("\u6ea2\u51fa\uff1a%1").arg(overflowText(overflow)));
+    m_overflowLabel->setProperty("alert", overflow);
+    refreshWidgetStyle(m_overflowLabel);
 }
 
 void AcquisitionPage::setBufferPointCount(unsigned int pointsPerChannel) {
-    m_bufferPointLabel->setText(QStringLiteral("缓存点数/通道：%1").arg(pointsPerChannel));
+    const unsigned int clampedValue = qMin(pointsPerChannel, dsa::kMaxPointPerChannel);
+    m_bufferPointBar->setValue(static_cast<int>(clampedValue));
+    m_bufferPointValueLabel->setText(
+        QStringLiteral("\u7f13\u5b58\uff1a%1 / %2").arg(clampedValue).arg(dsa::kMaxPointPerChannel));
+    updateBufferUsageStyle(clampedValue);
 }
 
 void AcquisitionPage::refreshWaveforms(int maxPoints) {
@@ -114,4 +179,18 @@ void AcquisitionPage::setSelectedChannels(const QVector<int>& channels) {
 
 QVector<int> AcquisitionPage::selectedChannels() const {
     return m_selectorWidget->selectedChannels();
+}
+
+void AcquisitionPage::updateBufferUsageStyle(unsigned int pointsPerChannel) {
+    QString usageState = QStringLiteral("normal");
+    if (pointsPerChannel >= (dsa::kMaxPointPerChannel * 7U) / 8U) {
+        usageState = QStringLiteral("critical");
+    } else if (pointsPerChannel >= (dsa::kMaxPointPerChannel * 3U) / 4U) {
+        usageState = QStringLiteral("warning");
+    }
+
+    m_bufferPointBar->setProperty("usageState", usageState);
+    m_bufferPointValueLabel->setProperty("usageState", usageState);
+    refreshWidgetStyle(m_bufferPointBar);
+    refreshWidgetStyle(m_bufferPointValueLabel);
 }

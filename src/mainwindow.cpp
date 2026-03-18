@@ -158,7 +158,7 @@ void MainWindow::onTogglePlotClicked() {
         }
     }
 
-    m_plotService->startPlotting(16);
+    m_plotService->startPlotting(50);
 }
 
 void MainWindow::onQuickStartClicked() {
@@ -353,10 +353,10 @@ void MainWindow::buildUi() {
 
     QWidget* sideMenu = new QWidget(m_centralRoot);
     sideMenu->setObjectName("SideMenu");
-    sideMenu->setFixedWidth(176);
+    sideMenu->setFixedWidth(141);
     ThemeHelper::applyCardShadow(sideMenu);
     QVBoxLayout* sideLayout = new QVBoxLayout(sideMenu);
-    sideLayout->setContentsMargins(16, 16, 16, 16);
+    sideLayout->setContentsMargins(10, 16, 10, 16);
     sideLayout->setSpacing(10);
 
     QLabel* appTitle = new QLabel("16CH DSA", sideMenu);
@@ -366,7 +366,7 @@ void MainWindow::buildUi() {
     appSubTitle->setObjectName("AppSubTitle");
     const QPixmap subTitleImage(":/brand/cumtb2.png");
     if (!subTitleImage.isNull()) {
-        appSubTitle->setPixmap(subTitleImage.scaled(140, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        appSubTitle->setPixmap(subTitleImage.scaled(118, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         appSubTitle->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     } else {
         appSubTitle->setText("Industrial Acquisition");
@@ -492,9 +492,9 @@ QPushButton* MainWindow::createMenuButton(const QString& text) {
     button->setCursor(Qt::PointingHandCursor);
     button->setMinimumHeight(40);
     button->setLayoutDirection(Qt::LeftToRight);
-    button->setLeftIconPadding(8);
-    button->setRightTextPadding(12);
-    button->setMiddleGap(20);
+    button->setLeftIconPadding(6);
+    button->setRightTextPadding(8);
+    button->setMiddleGap(12);
     return button;
 }
 
@@ -541,7 +541,7 @@ void MainWindow::bindSignals() {
     });
 
     connect(m_plotService, &PlotService::plottingChanged, this, &MainWindow::updatePlotUi);
-    connect(m_plotService, &PlotService::plottingTick, this, [this]() { m_acquisitionPage->refreshWaveforms(2400); });
+    connect(m_plotService, &PlotService::plottingTick, this, [this]() { m_acquisitionPage->refreshWaveforms(1200); });
 }
 
 void MainWindow::initializeSdk() {

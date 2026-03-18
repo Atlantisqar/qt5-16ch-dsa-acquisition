@@ -1,8 +1,12 @@
-﻿#include "core/acquisitionservice.h"
+#include "core/acquisitionservice.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QtMath>
 
 #include <cstring>
@@ -10,6 +14,7 @@
 namespace {
 constexpr int kPollIntervalMs = 8;
 constexpr int kMockTickMs = 20;
+constexpr int kMaxDrainReadsPerTick = 8;
 constexpr unsigned int kContinuousReadThreshold = 1024;
 constexpr unsigned int kContinuousReadChunk = 4096;
 constexpr unsigned int kContinuousReadChunkHigh = 8192;
@@ -23,6 +28,30 @@ constexpr quint32 kBinaryVersion = 1;
 constexpr quint32 kChannelCount = 16;
 constexpr qint64 kMaxContinuousFileBytes = 50LL * 1024LL * 1024LL;
 constexpr bool kWriteLegacyChannelFiles = false;
+
+QString diagnosticTraceFilePath() {
+    QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (baseDir.trimmed().isEmpty()) {
+        baseDir = QCoreApplication::applicationDirPath();
+    }
+
+    QDir dir(baseDir);
+    dir.mkpath(".");
+    return dir.filePath("acquisition_trace.log");
+}
+
+void appendDiagnosticTrace(const QString& message) {
+    QFile file(diagnosticTraceFilePath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        return;
+    }
+
+    QTextStream stream(&file);
+    stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz ")
+           << "[Acq] "
+           << message
+           << '\n';
+}
 }  // namespace
 
 AcquisitionService::AcquisitionService(Dsa16ChDeviceService* deviceService,
@@ -52,6 +81,7 @@ bool AcquisitionService::startAcquisition() {
     if (m_running) {
         return true;
     }
+    appendDiagnosticTrace("startAcquisition begin");
     if (m_dataStore == nullptr) {
         return setError("Acquisition service init failed: data store is null.");
     }
@@ -84,6 +114,7 @@ bool AcquisitionService::startAcquisition() {
 }
 
 void AcquisitionService::stopAcquisition() {
+    appendDiagnosticTrace(QString("stopAcquisition running=%1").arg(m_running));
     if (!m_running) {
         m_pollTimer.stop();
         m_mockRunning = false;
@@ -121,7 +152,10 @@ QString AcquisitionService::lastError() const {
 }
 
 bool AcquisitionService::startRealAcquisition() {
+    appendDiagnosticTrace("startRealAcquisition begin");
     if (!m_deviceService->startAcquisition()) {
+        appendDiagnosticTrace(
+            QString("startRealAcquisition device start failed error=%1").arg(m_deviceService->lastError()));
         return setError(m_deviceService->lastError());
     }
 
@@ -138,6 +172,7 @@ bool AcquisitionService::startRealAcquisition() {
 }
 
 bool AcquisitionService::startMockAcquisition() {
+    appendDiagnosticTrace("startMockAcquisition begin");
     if (shouldWriteToDisk() && !ensureOutputFilesReady()) {
         return false;
     }
@@ -174,16 +209,25 @@ void AcquisitionService::onPollTimeout() {
     }
     m_lastBufferPointCount = bufferPointCount;
     emit bufferPointCountUpdated(bufferPointCount);
+    appendDiagnosticTrace(QString("poll bufferPointCount=%1").arg(bufferPointCount));
 
-    unsigned int pointsToRead = 0;
-    if (!computePointsToRead(bufferPointCount, pointsToRead)) {
-        setError("Compute read points failed.");
-        emit errorOccurred(lastError());
-        stopAcquisition();
-        return;
-    }
+    unsigned int currentBufferPointCount = bufferPointCount;
+    int readLoops = 0;
+    while (readLoops < kMaxDrainReadsPerTick) {
+        unsigned int pointsToRead = 0;
+        if (!computePointsToRead(currentBufferPointCount, pointsToRead)) {
+            setError("Compute read points failed.");
+            emit errorOccurred(lastError());
+            stopAcquisition();
+            return;
+        }
 
-    if (pointsToRead > 0) {
+        if (pointsToRead == 0) {
+            break;
+        }
+
+        appendDiagnosticTrace(
+            QString("poll loop=%1 buffer=%2 pointsToRead=%3").arg(readLoops).arg(currentBufferPointCount).arg(pointsToRead));
         std::array<QVector<double>, dsa::kChannelCount> samples;
         if (!m_deviceService->readData(pointsToRead, samples)) {
             const QString message = m_deviceService->lastError();
@@ -192,8 +236,21 @@ void AcquisitionService::onPollTimeout() {
             stopAcquisition();
             return;
         }
+        appendDiagnosticTrace(QString("poll readData ok loop=%1 points=%2").arg(readLoops).arg(pointsToRead));
         processReadFrame(pointsToRead, std::move(samples));
+        ++readLoops;
+
+        if (!m_deviceService->queryBufferPointCount(currentBufferPointCount)) {
+            const QString message = m_deviceService->lastError();
+            setError(message);
+            emit errorOccurred(message);
+            stopAcquisition();
+            return;
+        }
     }
+
+    m_lastBufferPointCount = currentBufferPointCount;
+    emit bufferPointCountUpdated(currentBufferPointCount);
 
     bool overflow = false;
     if (!m_deviceService->queryOverflow(overflow)) {
@@ -212,17 +269,15 @@ void AcquisitionService::onPollTimeout() {
 bool AcquisitionService::computePointsToRead(unsigned int bufferPointCount, unsigned int& pointsToRead) const {
     pointsToRead = 0;
 
+    const unsigned int configuredChunk =
+        qMax(dsa::kPointAlign, (m_settings.fixedPointCountPerCh / dsa::kPointAlign) * dsa::kPointAlign);
+
     const bool continuousMode =
-        m_settings.sampleMode == static_cast<unsigned int>(dsa::SampleMode::Continuous);
+        m_settings.sampleMode == static_cast<unsigned int>(dsa::SampleMode::Continuous) ||
+        m_settings.sampleMode == static_cast<unsigned int>(dsa::SampleMode::ContinuousFixedPoint);
     if (continuousMode) {
-        if (bufferPointCount >= kBufferCriticalWaterMark) {
-            pointsToRead = qMin(bufferPointCount, kContinuousReadChunkCritical);
-        } else if (bufferPointCount >= kBufferHighWaterMark) {
-            pointsToRead = qMin(bufferPointCount, kContinuousReadChunkHigh);
-        } else if (bufferPointCount >= kContinuousReadThreshold) {
-            pointsToRead = qMin(bufferPointCount, kContinuousReadChunk);
-        } else if (bufferPointCount >= kContinuousMinRead) {
-            pointsToRead = bufferPointCount;
+        if (bufferPointCount >= configuredChunk) {
+            pointsToRead = configuredChunk;
         }
         pointsToRead = (pointsToRead / dsa::kPointAlign) * dsa::kPointAlign;
         return true;
@@ -243,7 +298,10 @@ void AcquisitionService::processReadFrame(unsigned int pointsToRead,
     frame.pointCountPerChannel = pointsToRead;
     frame.channels = std::move(samples);
 
+    appendDiagnosticTrace(QString("processReadFrame appendFrame begin points=%1").arg(pointsToRead));
     const quint64 frameIndex = m_dataStore->appendFrame(frame);
+    appendDiagnosticTrace(
+        QString("processReadFrame appendFrame ok frameIndex=%1 points=%2").arg(frameIndex).arg(pointsToRead));
     emit frameStored(frameIndex, pointsToRead);
 
     if (shouldWriteToDisk()) {
@@ -339,8 +397,8 @@ bool AcquisitionService::rotateSessionBinaryFile() {
     quint32 candidateIndex = m_sessionBinaryFileIndex + 1;
     QString candidatePath;
     do {
-        candidatePath = dir.filePath(
-            QString("%1_part%2.bin").arg(m_sessionBinaryBaseName).arg(candidateIndex, 3, 10, QChar('0')));
+        candidatePath =
+            dir.filePath(QString("%1_part%2.bin").arg(m_sessionBinaryBaseName).arg(candidateIndex, 3, 10, QChar('0')));
         if (!QFileInfo::exists(candidatePath)) {
             break;
         }
@@ -390,6 +448,7 @@ void AcquisitionService::writeFrameToDisk(const AcquisitionFrame& frame) {
     if (!shouldWriteToDisk()) {
         return;
     }
+    appendDiagnosticTrace(QString("writeFrameToDisk begin points=%1").arg(frame.pointCountPerChannel));
     if (!ensureOutputFilesReady()) {
         emit errorOccurred(lastError());
         return;
@@ -434,6 +493,7 @@ void AcquisitionService::writeFrameToDisk(const AcquisitionFrame& frame) {
     if (kWriteLegacyChannelFiles) {
         writeLegacyChannelFiles(frame);
     }
+    appendDiagnosticTrace(QString("writeFrameToDisk end points=%1").arg(frame.pointCountPerChannel));
 }
 
 void AcquisitionService::writeLegacyChannelFiles(const AcquisitionFrame& frame) {
@@ -475,5 +535,6 @@ void AcquisitionService::closeOutputFiles() {
 bool AcquisitionService::setError(const QString& message) {
     std::lock_guard<std::mutex> lock(m_errorMutex);
     m_lastError = message;
+    appendDiagnosticTrace(QString("error=%1").arg(message));
     return false;
 }

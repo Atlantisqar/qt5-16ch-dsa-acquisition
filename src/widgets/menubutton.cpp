@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QStyle>
 #include <QStyleOptionButton>
+#include <QFontMetrics>
 
 MenuButton::MenuButton(const QString& text, QWidget* parent)
     : QPushButton(text, parent) {}
@@ -53,7 +54,9 @@ void MenuButton::paintEvent(QPaintEvent* event) {
 
     painter.setFont(font());
     painter.setPen(palette().color(QPalette::ButtonText));
-    painter.drawText(textRect, Qt::AlignRight | Qt::AlignVCenter, text());
+    const QFontMetrics metrics(font());
+    const QString visibleText = metrics.elidedText(text(), Qt::ElideRight, qMax(0, textRect.width()));
+    painter.drawText(textRect, Qt::AlignRight | Qt::AlignVCenter, visibleText);
 
     if (hasFocus()) {
         QStyleOptionFocusRect focusOpt;

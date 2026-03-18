@@ -74,6 +74,63 @@ QLabel#HintLabel {
     color: #7B7F87;
 }
 
+QFrame#StatusMetricCard,
+QWidget#StatusMetricCard {
+    background: rgba(246, 249, 253, 210);
+    border: 1px solid rgba(213, 223, 237, 220);
+    border-radius: 7px;
+}
+
+QLabel#MetricTitle {
+    color: #7B7F87;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#MetricValue {
+    color: #1F2742;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#MetricValue[alert="true"] {
+    color: #AF2222;
+}
+
+QLabel#MetricValue[usageState="warning"] {
+    color: #A15C05;
+}
+
+QLabel#MetricValue[usageState="critical"] {
+    color: #AF2222;
+}
+
+QLabel#MetricHint {
+    color: #7B7F87;
+    font-size: 11px;
+}
+
+QProgressBar#BufferProgressBar {
+    min-height: 12px;
+    max-height: 12px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(221, 230, 241, 235);
+}
+
+QProgressBar#BufferProgressBar::chunk {
+    border-radius: 6px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #314164, stop:1 #1F2742);
+}
+
+QProgressBar#BufferProgressBar[usageState="warning"]::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #D59533, stop:1 #B26C0A);
+}
+
+QProgressBar#BufferProgressBar[usageState="critical"]::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #D75A5A, stop:1 #AF2222);
+}
+
 QComboBox,
 QSpinBox,
 QLineEdit,
