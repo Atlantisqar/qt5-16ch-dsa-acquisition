@@ -1,0 +1,17 @@
+<RCC>
+    <qresource prefix="/">
+        <file>styles/main.qss</file>
+        <file>icons/logo.svg</file>
+        <file alias="menu-icons/folder-add_line.png">../icon/folder-add_line.png</file>
+        <file alias="menu-icons/folder-open_line.png">../icon/folder-open_line.png</file>
+        <file alias="menu-icons/monitor_line.png">../icon/monitor_line.png</file>
+        <file alias="menu-icons/setting_line.png">../icon/setting_line.png</file>
+        <file alias="menu-icons/data-monitor_line.png">../icon/data-monitor_line.png</file>
+        <file alias="menu-icons/synchronize_line.png">../icon/synchronize_line.png</file>
+        <file alias="menu-icons/line-chart_line.png">../icon/line-chart_line.png</file>
+        <file alias="menu-icons/question-circle_line.png">../icon/question-circle_line.png</file>
+        <file alias="menu-icons/check-circle_line.png">../icon/check-circle_line.png</file>
+        <file alias="menu-icons/close-circle_line.png">../icon/close-circle_line.png</file>
+        <file alias="brand/cumtb2.png">../icon/cumtb2.png</file>
+    </qresource>
+</RCC>

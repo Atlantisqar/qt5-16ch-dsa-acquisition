@@ -1,0 +1,37 @@
+﻿# Build outputs
+/build/
+/build_x64/
+/cmake-build-*/
+
+# IDE artifacts
+/.vs/
+/.vscode/
+*.user
+*.VC.db
+*.opendb
+
+# C/C++ temporary files
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+*.ipch
+
+# Qt/CMake generated files
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Legacy root-level files (not part of current CMake target)
+/main.cpp
+/mainwindow.cpp
+/mainwindow.h
+/mainwindow.ui
+/mainwindow_old.cpp
+/atom_16ch_dsa_api.h
+/atom_16ch_dsa_api.dll
+/16通道动态信号采集板接口函数说明.pdf

@@ -1,0 +1,154 @@
+QWidget#RootWindow {
+    background:
+        qradialgradient(cx:0.15, cy:0.08, radius:1.1, fx:0.15, fy:0.08, stop:0 rgba(174, 204, 236, 190), stop:1 rgba(174, 204, 236, 0)),
+        qradialgradient(cx:0.88, cy:0.92, radius:1.1, fx:0.88, fy:0.92, stop:0 rgba(196, 220, 245, 175), stop:1 rgba(196, 220, 245, 0)),
+        qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #D3DDEB, stop:0.52 #DFE7F1, stop:1 #E9EEF6);
+    color: #121212;
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QWidget#WorkArea,
+QStackedWidget {
+    background: transparent;
+}
+
+QWidget#SideMenu {
+    background: rgba(255, 255, 255, 222);
+    border: 1px solid rgba(191, 204, 223, 235);
+    border-radius: 9px;
+}
+
+QLabel#AppTitle {
+    color: #1F2742;
+    font-size: 23px;
+    font-weight: 700;
+}
+
+QLabel#AppSubTitle {
+    color: #7B7F87;
+    font-size: 13px;
+}
+
+QPushButton#SideMenuButton {
+    background: rgba(238, 243, 250, 175);
+    color: #1F2742;
+    border: 1px solid rgba(214, 224, 238, 210);
+    border-radius: 5px;
+    padding: 9px 13px;
+    padding-left: 6px;
+    padding-right: 12px;
+    text-align: right;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QPushButton#SideMenuButton:hover {
+    background: rgba(229, 236, 248, 205);
+}
+
+QPushButton#SideMenuButton:pressed {
+    background: rgba(217, 228, 245, 225);
+}
+
+QWidget#CardWidget,
+QFrame#CardWidget {
+    background: rgba(255, 255, 255, 230);
+    border: 1px solid rgba(193, 205, 223, 235);
+    border-radius: 8px;
+}
+
+QLabel#CardTitle {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1F2742;
+}
+
+QLabel#SectionTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: #2D3A52;
+}
+
+QLabel#HintLabel {
+    color: #7B7F87;
+}
+
+QComboBox,
+QSpinBox,
+QLineEdit,
+QListWidget {
+    border: 1px solid rgba(192, 206, 223, 230);
+    border-radius: 4px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 228);
+}
+
+QComboBox:hover,
+QSpinBox:hover,
+QLineEdit:hover,
+QListWidget:hover {
+    border-color: rgba(186, 199, 218, 235);
+}
+
+QPushButton {
+    border: 1px solid rgba(209, 217, 231, 215);
+    border-radius: 4px;
+    padding: 6px 12px;
+    background: rgba(247, 249, 252, 190);
+    color: #1F2742;
+}
+
+QPushButton:hover {
+    background: rgba(238, 243, 250, 220);
+}
+
+QPushButton:pressed {
+    background: rgba(226, 233, 247, 235);
+}
+
+QPushButton#SelectorActionButton {
+    text-align: center;
+    font-weight: 600;
+    background: rgba(245, 248, 252, 200);
+}
+
+QPushButton#SelectorActionButton:hover {
+    background: rgba(234, 241, 251, 230);
+}
+
+QScrollArea#ChannelScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#ChannelScrollArea QWidget#qt_scrollarea_viewport {
+    background: transparent;
+}
+
+QScrollArea#ChannelScrollArea > QWidget > QWidget#ChannelListContainer {
+    background: transparent;
+    border: none;
+}
+
+QCheckBox {
+    color: #2A2F36;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked {
+    border: 1px solid #BBC7D8;
+    border-radius: 2px;
+    background: #FFFFFF;
+}
+
+QCheckBox::indicator:checked {
+    border: 1px solid #1F2742;
+    border-radius: 2px;
+    background: #1F2742;
+}
