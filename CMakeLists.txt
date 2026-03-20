@@ -56,6 +56,10 @@ set(APP_SOURCES
     resources/resources.qrc
 )
 
+if(WIN32)
+    list(APPEND APP_SOURCES resources/app_icon.rc)
+endif()
+
 add_executable(${PROJECT_NAME} WIN32 ${APP_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE

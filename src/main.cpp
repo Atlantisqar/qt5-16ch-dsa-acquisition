@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QIcon>
 #include <QTextStream>
 
 int main(int argc, char* argv[]) {
@@ -9,6 +10,8 @@ int main(int argc, char* argv[]) {
     app.setApplicationName("Dsa16ChAcquisition");
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("Atom");
+    const QIcon appIcon(":/icons/app_icon.png");
+    app.setWindowIcon(appIcon);
 
     QFile styleFile(":/styles/main.qss");
     if (styleFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -27,6 +30,7 @@ int main(int argc, char* argv[]) {
     }
 
     MainWindow window(startupProjectFile);
+    window.setWindowIcon(appIcon);
     window.showMaximized();
     return app.exec();
 }

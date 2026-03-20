@@ -130,6 +130,49 @@ xlabel("Sample Index");
 ylabel("Amplitude");
 ```
 
+## 🧩 资源与附带代码说明
+
+除了主程序本体，仓库里还附带了一些直接服务于界面和数据处理的资源文件：
+
+- `resources/styles/main.qss`
+  用于统一软件界面样式，包括侧边栏、卡片、按钮、缓冲进度条和波形页面的视觉风格
+- `resources/icons/app_icon.png`
+  用于程序运行时窗口图标和任务栏图标
+- `resources/icons/app_icon.ico`
+  用于 Windows 可执行文件图标
+- `resources/resources.qrc`
+  Qt 资源索引文件，用来把图标、样式、logo 等资源打包进程序
+- `read_dsa_data_and_plot.m`
+  当前主格式数据的 MATLAB 读取与绘图脚本
+- `read_seismic_data_and_plot.m`
+  旧版地震采集数据的 MATLAB 读取与绘图脚本
+
+### Qt 资源是怎么用的
+
+程序使用 Qt Resource System 管理静态资源。  
+资源一旦写入 `.qrc`，运行时就可以直接通过 `:/` 路径访问，不需要再关心实际磁盘位置。
+
+示例：
+
+```cpp
+QFile styleFile(":/styles/main.qss");
+QIcon appIcon(":/icons/app_icon.png");
+button->setIcon(QIcon(":/menu-icons/folder-open_line.png"));
+```
+
+这种方式的好处是：
+
+- 📦 发布时更简单，样式和图标会随程序一起打包
+- 🧼 运行目录更干净，不需要把一堆图片散落在 exe 旁边
+- 🔁 后续替换图标、logo 或样式时，只需要更新资源文件并重新编译
+
+### MATLAB 脚本适合做什么
+
+- 快速检查采集文件是否正常
+- 按通道查看历史波形尾部数据
+- 对旧格式和当前格式做兼容读取
+- 作为后续频谱分析、滤波、统计处理的输入脚本模板
+
 ## 🚀 典型使用流程
 
 1. 新建或打开项目 📁
