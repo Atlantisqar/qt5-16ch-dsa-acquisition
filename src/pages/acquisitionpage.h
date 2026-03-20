@@ -15,11 +15,13 @@ class AcquisitionPage : public QWidget {
 public:
     explicit AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* parent = nullptr);
 
+    void setDeviceOpened(bool opened);
     void setAcquisitionRunning(bool running);
     void setPlottingRunning(bool running);
     void setOverflow(bool overflow);
     void setBufferPointCount(unsigned int pointsPerChannel);
     void refreshWaveforms(int maxPoints = 2400);
+    void clearWaveforms();
     void setSelectedChannels(const QVector<int>& channels);
 
     QVector<int> selectedChannels() const;
@@ -34,6 +36,7 @@ private:
     MultiChannelDataStore* m_dataStore = nullptr;
     ChannelSelectorWidget* m_selectorWidget = nullptr;
     WaveformGridWidget* m_waveformGrid = nullptr;
+    QLabel* m_deviceStatusLabel = nullptr;
     QLabel* m_acquisitionStatusLabel = nullptr;
     QLabel* m_plotStatusLabel = nullptr;
     QLabel* m_overflowLabel = nullptr;

@@ -240,7 +240,7 @@ void MainWindow::onQuickClearClicked() {
     m_acquisitionPage->setPlottingRunning(false);
     m_acquisitionPage->setOverflow(false);
     m_acquisitionPage->setBufferPointCount(0);
-    m_acquisitionPage->refreshWaveforms(2400);
+    m_acquisitionPage->clearWaveforms();
 
     m_projectManager->clearCurrentProject();
     refreshHomePageProject();
@@ -421,43 +421,6 @@ void MainWindow::buildUi() {
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(14);
 
-    QWidget* topStatusCard = new QWidget(rightArea);
-    topStatusCard->setObjectName("CardWidget");
-    ThemeHelper::applyCardShadow(topStatusCard);
-    QHBoxLayout* statusLayout = new QHBoxLayout(topStatusCard);
-    statusLayout->setContentsMargins(16, 14, 16, 14);
-    statusLayout->setSpacing(16);
-
-    m_statusProjectLabel = new QLabel("项目：未打开", topStatusCard);
-    m_statusSdkLabel = new QLabel("SDK：未就绪", topStatusCard);
-    m_statusDeviceLabel = new QLabel("设备：未打开", topStatusCard);
-    m_statusAcqLabel = new QLabel("采集：已停止", topStatusCard);
-    m_statusPlotLabel = new QLabel("绘图：已停止", topStatusCard);
-    QLabel* topStatusLabels[] = {
-        m_statusProjectLabel,
-        m_statusSdkLabel,
-        m_statusDeviceLabel,
-        m_statusAcqLabel,
-        m_statusPlotLabel};
-    for (QLabel* label : topStatusLabels) {
-        QFont f = label->font();
-        if (f.pointSizeF() > 0.0) {
-            f.setPointSizeF(f.pointSizeF() * 1.265);
-        } else if (f.pointSize() > 0) {
-            f.setPointSizeF(static_cast<double>(f.pointSize()) * 1.265);
-        } else if (f.pixelSize() > 0) {
-            f.setPixelSize(qRound(static_cast<double>(f.pixelSize()) * 1.265));
-        }
-        label->setFont(f);
-        label->setAlignment(Qt::AlignCenter);
-        label->setWordWrap(true);
-        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        statusLayout->addWidget(label, 1);
-    }
-    topStatusCard->setMinimumHeight(qRound(static_cast<double>(topStatusCard->sizeHint().height()) * 1.15));
-
-    rightLayout->addWidget(topStatusCard);
-
     m_stack = new QStackedWidget(rightArea);
     m_homePage = new HomePage(m_stack);
     m_settingsPage = new SettingsPage(m_stack);
@@ -534,14 +497,14 @@ void MainWindow::bindSignals() {
     connect(m_settingsPage, &SettingsPage::dioReadRequested, this, &MainWindow::onDioReadRequested);
 
     connect(m_acquisitionService, &AcquisitionService::runningChanged, this, &MainWindow::updateAcquisitionUi);
-    connect(m_acquisitionService, &AcquisitionService::bufferPointCountUpdated, m_acquisitionPage, &AcquisitionPage::setBufferPointCount);
+    connect(m_acquisitionService, &AcquisitionService::bufferPointCountUpdated, this, &MainWindow::onBufferPointCountUpdated);
     connect(m_acquisitionService, &AcquisitionService::overflowDetected, m_acquisitionPage, &AcquisitionPage::setOverflow);
     connect(m_acquisitionService, &AcquisitionService::errorOccurred, this, [this](const QString& message) {
         statusBar()->showMessage(message, 5000);
     });
 
     connect(m_plotService, &PlotService::plottingChanged, this, &MainWindow::updatePlotUi);
-    connect(m_plotService, &PlotService::plottingTick, this, [this]() { m_acquisitionPage->refreshWaveforms(1200); });
+    connect(m_plotService, &PlotService::plottingTick, this, &MainWindow::onPlotTick);
 }
 
 void MainWindow::initializeSdk() {
@@ -754,36 +717,80 @@ QStringList MainWindow::recentProjects() const {
 void MainWindow::refreshHomePageProject() {
     if (!m_projectManager->hasCurrentProject()) {
         m_homePage->setProjectInfo(nullptr);
-        m_statusProjectLabel->setText("项目：未打开");
         return;
     }
     const ProjectFileModel& project = m_projectManager->currentProject();
     m_homePage->setProjectInfo(&project);
-    m_statusProjectLabel->setText(QString("项目：%1").arg(project.projectName));
 }
 
 void MainWindow::updateSdkUi(bool ready, const QString& message) {
-    m_statusSdkLabel->setText(QString("SDK：%1").arg(ready ? "已就绪" : "未就绪"));
-    m_statusSdkLabel->setToolTip(message);
     m_homePage->setSdkStatus(ready, message);
     statusBar()->showMessage(message, 5000);
 }
 
 void MainWindow::updateDeviceUi(bool opened) {
-    m_statusDeviceLabel->setText(QString("设备：%1").arg(opened ? "已打开" : "未打开"));
     m_homePage->setDeviceStatus(opened);
+    m_acquisitionPage->setDeviceOpened(opened);
 }
 
 void MainWindow::updateAcquisitionUi(bool running) {
     m_toggleAcqButton->setText(running ? "关闭采集" : "开始采集");
-    m_statusAcqLabel->setText(QString("采集：%1").arg(running ? "运行中" : "已停止"));
     m_acquisitionPage->setAcquisitionRunning(running);
+}
+
+void MainWindow::onPlotTick() {
+    if (m_acquisitionPage == nullptr || m_stack == nullptr) {
+        return;
+    }
+
+    if (m_stack->currentWidget() != m_acquisitionPage) {
+        return;
+    }
+
+    const int channelCount = qMax(1, m_acquisitionPage->selectedChannels().size());
+    int maxPoints = 1200;
+    if (channelCount >= 12) {
+        maxPoints = 600;
+    } else if (channelCount >= 8) {
+        maxPoints = 800;
+    }
+
+    int refreshEveryTicks = 1;
+    if (m_acquisitionService != nullptr && m_acquisitionService->isRunning()) {
+        if (m_lastBufferPointCount >= (dsa::kMaxPointPerChannel * 7U) / 8U) {
+            refreshEveryTicks = 4;
+            maxPoints = qMin(maxPoints, 240);
+        } else if (m_lastBufferPointCount >= (dsa::kMaxPointPerChannel * 3U) / 4U) {
+            refreshEveryTicks = 3;
+            maxPoints = qMin(maxPoints, 400);
+        } else if (m_lastBufferPointCount >= dsa::kMaxPointPerChannel / 2U) {
+            refreshEveryTicks = 2;
+            maxPoints = qMin(maxPoints, 600);
+        }
+    }
+
+    ++m_plotTickCounter;
+    if (refreshEveryTicks > 1 && (m_plotTickCounter % refreshEveryTicks) != 0) {
+        return;
+    }
+
+    m_acquisitionPage->refreshWaveforms(maxPoints);
+}
+
+void MainWindow::onBufferPointCountUpdated(unsigned int pointsPerChannel) {
+    m_lastBufferPointCount = pointsPerChannel;
+    if (m_acquisitionPage != nullptr) {
+        m_acquisitionPage->setBufferPointCount(pointsPerChannel);
+    }
 }
 
 void MainWindow::updatePlotUi(bool running) {
     m_togglePlotButton->setText(running ? "停止绘图" : "开始绘图");
-    m_statusPlotLabel->setText(QString("绘图：%1").arg(running ? "运行中" : "已停止"));
     m_acquisitionPage->setPlottingRunning(running);
+    if (!running) {
+        m_plotTickCounter = 0;
+        m_acquisitionPage->clearWaveforms();
+    }
 }
 
 void MainWindow::showError(const QString& title, const QString& message) {

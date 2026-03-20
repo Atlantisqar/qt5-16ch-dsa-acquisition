@@ -32,6 +32,7 @@ Makefile
 /mainwindow.h
 /mainwindow.ui
 /mainwindow_old.cpp
+/Joint_Acquisittion_System/
 /atom_16ch_dsa_api.h
 /atom_16ch_dsa_api.dll
 /16通道动态信号采集板接口函数说明.pdf

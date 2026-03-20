@@ -29,6 +29,11 @@ QString diagnosticTraceFilePath() {
     return dir.filePath("acquisition_trace.log");
 }
 
+bool hotPathTraceEnabled() {
+    static const bool enabled = qEnvironmentVariableIsSet("DSA_TRACE_HOTPATH");
+    return enabled;
+}
+
 void appendDiagnosticTrace(const QString& message) {
     QFile file(diagnosticTraceFilePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
@@ -40,6 +45,13 @@ void appendDiagnosticTrace(const QString& message) {
            << "[Device] "
            << message
            << '\n';
+}
+
+void appendHotPathTrace(const QString& message) {
+    if (!hotPathTraceEnabled()) {
+        return;
+    }
+    appendDiagnosticTrace(message);
 }
 
 QString formatExceptionCode(unsigned long code) {
@@ -406,21 +418,21 @@ bool Dsa16ChDeviceService::queryBufferPointCount(unsigned int& pointCountPerCh) 
     }
 
     unsigned int value = 0;
-    appendDiagnosticTrace("queryBufferPointCount begin");
+    appendHotPathTrace("queryBufferPointCount begin");
 
     int rc = -1;
 #if defined(Q_CC_MSVC) && defined(Q_OS_WIN)
     unsigned long code = 0;
     rc = callQueryBufferWithSeh(m_loader->api().dsa_16ch_point_num_per_ch_in_buf_query, &value, &code);
     if (code != 0) {
-        appendDiagnosticTrace(QString("queryBufferPointCount seh=%1").arg(formatExceptionCode(code)));
+        appendHotPathTrace(QString("queryBufferPointCount seh=%1").arg(formatExceptionCode(code)));
         return setError(QString("Query buffer point count hit an SEH exception: %1.").arg(formatExceptionCode(code)));
     }
 #else
     rc = m_loader->api().dsa_16ch_point_num_per_ch_in_buf_query(&value);
 #endif
 
-    appendDiagnosticTrace(QString("queryBufferPointCount rc=%1 value=%2").arg(rc).arg(value));
+    appendHotPathTrace(QString("queryBufferPointCount rc=%1 value=%2").arg(rc).arg(value));
     if (rc != 0) {
         return setError(QString("Query buffer point count failed: "
                                 "dsa_16ch_point_num_per_ch_in_buf_query returned %1.")
@@ -447,7 +459,7 @@ bool Dsa16ChDeviceService::readData(unsigned int pointNum2Read,
         channelBuffer.resize(static_cast<int>(pointNum2Read));
     }
 
-    appendDiagnosticTrace(QString("readData begin points=%1").arg(pointNum2Read));
+    appendHotPathTrace(QString("readData begin points=%1").arg(pointNum2Read));
 
     int rc = -1;
 #if defined(Q_CC_MSVC) && defined(Q_OS_WIN)
@@ -472,7 +484,7 @@ bool Dsa16ChDeviceService::readData(unsigned int pointNum2Read,
                              outSamples[15].data(),
                              &code);
     if (code != 0) {
-        appendDiagnosticTrace(QString("readData seh=%1 points=%2").arg(formatExceptionCode(code)).arg(pointNum2Read));
+        appendHotPathTrace(QString("readData seh=%1 points=%2").arg(formatExceptionCode(code)).arg(pointNum2Read));
         return setError(QString("Read acquisition data hit an SEH exception: %1, point_num2read=%2.")
                             .arg(formatExceptionCode(code))
                             .arg(pointNum2Read));
@@ -497,7 +509,7 @@ bool Dsa16ChDeviceService::readData(unsigned int pointNum2Read,
                                             outSamples[15].data());
 #endif
 
-    appendDiagnosticTrace(QString("readData rc=%1 points=%2").arg(rc).arg(pointNum2Read));
+    appendHotPathTrace(QString("readData rc=%1 points=%2").arg(rc).arg(pointNum2Read));
     if (rc != 0) {
         return setError(QString("Read acquisition data failed: dsa_16ch_read_data(%1) returned %2.")
                             .arg(pointNum2Read)
@@ -516,21 +528,21 @@ bool Dsa16ChDeviceService::queryOverflow(bool& overflow) {
     }
 
     unsigned int value = 0;
-    appendDiagnosticTrace("queryOverflow begin");
+    appendHotPathTrace("queryOverflow begin");
 
     int rc = -1;
 #if defined(Q_CC_MSVC) && defined(Q_OS_WIN)
     unsigned long code = 0;
     rc = callQueryOverflowWithSeh(m_loader->api().dsa_16ch_buf_overflow_query, &value, &code);
     if (code != 0) {
-        appendDiagnosticTrace(QString("queryOverflow seh=%1").arg(formatExceptionCode(code)));
+        appendHotPathTrace(QString("queryOverflow seh=%1").arg(formatExceptionCode(code)));
         return setError(QString("Query overflow state hit an SEH exception: %1.").arg(formatExceptionCode(code)));
     }
 #else
     rc = m_loader->api().dsa_16ch_buf_overflow_query(&value);
 #endif
 
-    appendDiagnosticTrace(QString("queryOverflow rc=%1 value=%2").arg(rc).arg(value));
+    appendHotPathTrace(QString("queryOverflow rc=%1 value=%2").arg(rc).arg(value));
     if (rc != 0) {
         return setError(QString("Query overflow state failed: dsa_16ch_buf_overflow_query returned %1.").arg(rc));
     }

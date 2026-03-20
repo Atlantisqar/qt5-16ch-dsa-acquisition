@@ -29,6 +29,14 @@ QVector<int> WaveformGridWidget::activeChannels() const {
     return m_activeChannels;
 }
 
+void WaveformGridWidget::clearChannelData() {
+    for (auto it = m_views.begin(); it != m_views.end(); ++it) {
+        if (it.value() != nullptr) {
+            it.value()->setSamples(QVector<double>());
+        }
+    }
+}
+
 void WaveformGridWidget::updateChannelData(const QHash<int, QVector<double>>& channelData) {
     for (auto it = channelData.constBegin(); it != channelData.constEnd(); ++it) {
         const int channel = it.key();

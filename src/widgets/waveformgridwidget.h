@@ -15,6 +15,7 @@ public:
 
     void setActiveChannels(const QVector<int>& channels);
     QVector<int> activeChannels() const;
+    void clearChannelData();
     void updateChannelData(const QHash<int, QVector<double>>& channelData);
 
 private:

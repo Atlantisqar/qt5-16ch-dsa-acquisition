@@ -3,6 +3,7 @@
 #include "core/dsa16chdeviceservice.h"
 #include "core/multichanneldatastore.h"
 
+#include <QByteArray>
 #include <QFile>
 #include <QObject>
 #include <QTimer>
@@ -44,6 +45,7 @@ private:
     bool startRealAcquisition();
     bool startMockAcquisition();
 
+    unsigned int configuredReadChunk() const;
     bool computePointsToRead(unsigned int bufferPointCount, unsigned int& pointsToRead) const;
     void processReadFrame(unsigned int pointsToRead,
                           std::array<QVector<double>, dsa::kChannelCount>&& samples);
@@ -55,6 +57,8 @@ private:
     bool rotateSessionBinaryFile();
     bool isContinuousModeForFileSplit() const;
     qint64 estimateFrameBytes(const AcquisitionFrame& frame) const;
+    bool flushSessionBinaryBuffer();
+    void appendFrameToSessionBinaryBuffer(const AcquisitionFrame& frame);
     void writeFrameToDisk(const AcquisitionFrame& frame);
     void writeLegacyChannelFiles(const AcquisitionFrame& frame);
     void closeOutputFiles();
@@ -80,7 +84,11 @@ private:
     std::unique_ptr<QFile> m_sessionBinaryFile;
     QString m_sessionBinaryFilePath;
     QString m_sessionBinaryBaseName;
+    QByteArray m_sessionBinaryWriteBuffer;
     quint32 m_sessionBinaryFileIndex = 0;
     qint64 m_sessionStartMs = 0;
     double m_mockPhase = 0.0;
+    qint64 m_lastBufferUiUpdateMs = 0;
+    qint64 m_lastOverflowQueryMs = 0;
+    unsigned int m_lastReportedBufferPointCount = 0;
 };

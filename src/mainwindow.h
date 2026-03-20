@@ -45,6 +45,8 @@ private slots:
     void onDioDirectionSetRequested(unsigned int groupIndex, unsigned int direction);
     void onDioWriteRequested(unsigned int groupIndex, unsigned char doData);
     void onDioReadRequested(unsigned int groupIndex);
+    void onPlotTick();
+    void onBufferPointCountUpdated(unsigned int pointsPerChannel);
 
 private:
     void buildUi();
@@ -89,11 +91,7 @@ private:
     QPushButton* m_quickClearButton = nullptr;
     QPushButton* m_aboutButton = nullptr;
 
-    QLabel* m_statusProjectLabel = nullptr;
-    QLabel* m_statusSdkLabel = nullptr;
-    QLabel* m_statusDeviceLabel = nullptr;
-    QLabel* m_statusAcqLabel = nullptr;
-    QLabel* m_statusPlotLabel = nullptr;
-
     QSettings m_appSettings;
+    unsigned int m_lastBufferPointCount = 0;
+    int m_plotTickCounter = 0;
 };

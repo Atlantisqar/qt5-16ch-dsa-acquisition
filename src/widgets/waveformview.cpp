@@ -2,6 +2,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <algorithm>
 #include <QtMath>
 
 WaveformView::WaveformView(QWidget* parent)
@@ -133,7 +134,11 @@ void WaveformView::paintEvent(QPaintEvent* event) {
     }
 
     QPainterPath path;
-    for (int i = 0; i < sampleCount; ++i) {
+    const int drawablePixels = std::max(1, static_cast<int>(plotRect.width()));
+    const int maxRenderableSamples = std::max(2, drawablePixels * 2);
+    const int step = std::max(1, sampleCount / maxRenderableSamples);
+
+    for (int i = 0; i < sampleCount; i += step) {
         const qreal x = plotRect.left() + plotRect.width() * static_cast<qreal>(i) / (sampleCount - 1);
         const qreal normalized = (m_samples[i] - minVal) / (maxVal - minVal);
         const qreal y = plotRect.bottom() - normalized * plotRect.height();
@@ -142,6 +147,12 @@ void WaveformView::paintEvent(QPaintEvent* event) {
         } else {
             path.lineTo(x, y);
         }
+    }
+
+    if (((sampleCount - 1) % step) != 0) {
+        const qreal normalized = (m_samples.back() - minVal) / (maxVal - minVal);
+        const qreal y = plotRect.bottom() - normalized * plotRect.height();
+        path.lineTo(plotRect.right(), y);
     }
 
     painter.setClipRect(plotRect.adjusted(-1, -1, 1, 1));

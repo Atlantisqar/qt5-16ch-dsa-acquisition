@@ -14,12 +14,9 @@
 namespace {
 constexpr int kPollIntervalMs = 8;
 constexpr int kMockTickMs = 20;
-constexpr int kMaxDrainReadsPerTick = 8;
-constexpr unsigned int kContinuousReadThreshold = 1024;
-constexpr unsigned int kContinuousReadChunk = 4096;
-constexpr unsigned int kContinuousReadChunkHigh = 8192;
-constexpr unsigned int kContinuousReadChunkCritical = 16384;
-constexpr unsigned int kContinuousMinRead = 256;
+constexpr int kBaseDrainReadsPerTick = 2;
+constexpr int kHighWaterDrainReadsPerTick = 4;
+constexpr int kCriticalDrainReadsPerTick = 8;
 constexpr unsigned int kBufferHighWaterMark = 24576;      // 75% of 32768
 constexpr unsigned int kBufferCriticalWaterMark = 28672;  // 87.5% of 32768
 constexpr unsigned int kMockPointPerTick = 512;
@@ -27,6 +24,9 @@ constexpr quint32 kBinaryMagic = 0x31415344;  // "DSA1"
 constexpr quint32 kBinaryVersion = 1;
 constexpr quint32 kChannelCount = 16;
 constexpr qint64 kMaxContinuousFileBytes = 50LL * 1024LL * 1024LL;
+constexpr qint64 kSessionFlushThresholdBytes = 2LL * 1024LL * 1024LL;
+constexpr qint64 kBufferUiUpdateIntervalMs = 40;
+constexpr qint64 kOverflowQueryIntervalMs = 100;
 constexpr bool kWriteLegacyChannelFiles = false;
 
 QString diagnosticTraceFilePath() {
@@ -40,6 +40,11 @@ QString diagnosticTraceFilePath() {
     return dir.filePath("acquisition_trace.log");
 }
 
+bool hotPathTraceEnabled() {
+    static const bool enabled = qEnvironmentVariableIsSet("DSA_TRACE_HOTPATH");
+    return enabled;
+}
+
 void appendDiagnosticTrace(const QString& message) {
     QFile file(diagnosticTraceFilePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
@@ -51,6 +56,13 @@ void appendDiagnosticTrace(const QString& message) {
            << "[Acq] "
            << message
            << '\n';
+}
+
+void appendHotPathTrace(const QString& message) {
+    if (!hotPathTraceEnabled()) {
+        return;
+    }
+    appendDiagnosticTrace(message);
 }
 }  // namespace
 
@@ -100,8 +112,13 @@ bool AcquisitionService::startAcquisition() {
     m_sessionStartMs = QDateTime::currentMSecsSinceEpoch();
     m_sessionBinaryBaseName.clear();
     m_sessionBinaryFilePath.clear();
+    m_sessionBinaryWriteBuffer.clear();
     m_sessionBinaryFileIndex = 0;
     m_mockPhase = 0.0;
+    m_lastBufferUiUpdateMs = 0;
+    m_lastOverflowQueryMs = 0;
+    m_lastReportedBufferPointCount = 0;
+    m_sessionBinaryWriteBuffer.reserve(static_cast<int>(kSessionFlushThresholdBytes + 4096));
     closeOutputFiles();
 
     if (m_deviceService->isDeviceOpen()) {
@@ -208,12 +225,23 @@ void AcquisitionService::onPollTimeout() {
         return;
     }
     m_lastBufferPointCount = bufferPointCount;
-    emit bufferPointCountUpdated(bufferPointCount);
-    appendDiagnosticTrace(QString("poll bufferPointCount=%1").arg(bufferPointCount));
+    appendHotPathTrace(QString("poll bufferPointCount=%1").arg(bufferPointCount));
 
     unsigned int currentBufferPointCount = bufferPointCount;
+    const unsigned int configuredChunk = configuredReadChunk();
+    const unsigned int lowEstimateThreshold =
+        qMin(dsa::kMaxPointPerChannel, configuredChunk * 2U);
     int readLoops = 0;
-    while (readLoops < kMaxDrainReadsPerTick) {
+    int loopsSinceBufferQuery = 0;
+    int maxDrainReadsPerTick = kBaseDrainReadsPerTick;
+    if (bufferPointCount >= kBufferCriticalWaterMark) {
+        maxDrainReadsPerTick = kCriticalDrainReadsPerTick;
+    } else if (bufferPointCount >= kBufferHighWaterMark) {
+        maxDrainReadsPerTick = kHighWaterDrainReadsPerTick;
+    }
+    const int requeryEveryLoops = (bufferPointCount >= kBufferCriticalWaterMark) ? 1 : 2;
+
+    while (readLoops < maxDrainReadsPerTick) {
         unsigned int pointsToRead = 0;
         if (!computePointsToRead(currentBufferPointCount, pointsToRead)) {
             setError("Compute read points failed.");
@@ -223,10 +251,23 @@ void AcquisitionService::onPollTimeout() {
         }
 
         if (pointsToRead == 0) {
+            if (readLoops > 0 && loopsSinceBufferQuery > 0) {
+                if (!m_deviceService->queryBufferPointCount(currentBufferPointCount)) {
+                    const QString message = m_deviceService->lastError();
+                    setError(message);
+                    emit errorOccurred(message);
+                    stopAcquisition();
+                    return;
+                }
+                loopsSinceBufferQuery = 0;
+                if (currentBufferPointCount >= configuredChunk) {
+                    continue;
+                }
+            }
             break;
         }
 
-        appendDiagnosticTrace(
+        appendHotPathTrace(
             QString("poll loop=%1 buffer=%2 pointsToRead=%3").arg(readLoops).arg(currentBufferPointCount).arg(pointsToRead));
         std::array<QVector<double>, dsa::kChannelCount> samples;
         if (!m_deviceService->readData(pointsToRead, samples)) {
@@ -236,41 +277,73 @@ void AcquisitionService::onPollTimeout() {
             stopAcquisition();
             return;
         }
-        appendDiagnosticTrace(QString("poll readData ok loop=%1 points=%2").arg(readLoops).arg(pointsToRead));
+        appendHotPathTrace(QString("poll readData ok loop=%1 points=%2").arg(readLoops).arg(pointsToRead));
         processReadFrame(pointsToRead, std::move(samples));
         ++readLoops;
+        ++loopsSinceBufferQuery;
+        currentBufferPointCount =
+            (currentBufferPointCount > pointsToRead) ? (currentBufferPointCount - pointsToRead) : 0;
 
-        if (!m_deviceService->queryBufferPointCount(currentBufferPointCount)) {
+        const bool shouldRefreshBufferEstimate =
+            readLoops < maxDrainReadsPerTick &&
+            (loopsSinceBufferQuery >= requeryEveryLoops || currentBufferPointCount < lowEstimateThreshold);
+        if (shouldRefreshBufferEstimate) {
+            if (!m_deviceService->queryBufferPointCount(currentBufferPointCount)) {
+                const QString message = m_deviceService->lastError();
+                setError(message);
+                emit errorOccurred(message);
+                stopAcquisition();
+                return;
+            }
+            loopsSinceBufferQuery = 0;
+        }
+    }
+
+    m_lastBufferPointCount = currentBufferPointCount;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const bool shouldEmitBufferPointCount =
+        (nowMs - m_lastBufferUiUpdateMs) >= kBufferUiUpdateIntervalMs ||
+        currentBufferPointCount == 0 ||
+        currentBufferPointCount >= kBufferHighWaterMark ||
+        (currentBufferPointCount > m_lastReportedBufferPointCount
+             ? (currentBufferPointCount - m_lastReportedBufferPointCount) >= dsa::kPointAlign * 32
+             : (m_lastReportedBufferPointCount - currentBufferPointCount) >= dsa::kPointAlign * 32);
+    if (shouldEmitBufferPointCount) {
+        emit bufferPointCountUpdated(currentBufferPointCount);
+        m_lastBufferUiUpdateMs = nowMs;
+        m_lastReportedBufferPointCount = currentBufferPointCount;
+    }
+
+    const bool shouldQueryOverflow =
+        (nowMs - m_lastOverflowQueryMs) >= kOverflowQueryIntervalMs ||
+        currentBufferPointCount >= kBufferHighWaterMark || m_lastOverflow;
+    if (shouldQueryOverflow) {
+        bool overflow = false;
+        if (!m_deviceService->queryOverflow(overflow)) {
             const QString message = m_deviceService->lastError();
             setError(message);
             emit errorOccurred(message);
             stopAcquisition();
             return;
         }
+        m_lastOverflowQueryMs = nowMs;
+        if (overflow != m_lastOverflow) {
+            m_lastOverflow = overflow;
+            emit overflowDetected(overflow);
+        }
     }
+}
 
-    m_lastBufferPointCount = currentBufferPointCount;
-    emit bufferPointCountUpdated(currentBufferPointCount);
-
-    bool overflow = false;
-    if (!m_deviceService->queryOverflow(overflow)) {
-        const QString message = m_deviceService->lastError();
-        setError(message);
-        emit errorOccurred(message);
-        stopAcquisition();
-        return;
-    }
-    if (overflow != m_lastOverflow) {
-        m_lastOverflow = overflow;
-        emit overflowDetected(overflow);
-    }
+unsigned int AcquisitionService::configuredReadChunk() const {
+    const unsigned int alignedChunk =
+        (m_settings.fixedPointCountPerCh / dsa::kPointAlign) * dsa::kPointAlign;
+    return qMax(dsa::kPointAlign, alignedChunk);
 }
 
 bool AcquisitionService::computePointsToRead(unsigned int bufferPointCount, unsigned int& pointsToRead) const {
     pointsToRead = 0;
 
-    const unsigned int configuredChunk =
-        qMax(dsa::kPointAlign, (m_settings.fixedPointCountPerCh / dsa::kPointAlign) * dsa::kPointAlign);
+    const unsigned int configuredChunk = configuredReadChunk();
 
     const bool continuousMode =
         m_settings.sampleMode == static_cast<unsigned int>(dsa::SampleMode::Continuous) ||
@@ -298,9 +371,9 @@ void AcquisitionService::processReadFrame(unsigned int pointsToRead,
     frame.pointCountPerChannel = pointsToRead;
     frame.channels = std::move(samples);
 
-    appendDiagnosticTrace(QString("processReadFrame appendFrame begin points=%1").arg(pointsToRead));
+    appendHotPathTrace(QString("processReadFrame appendFrame begin points=%1").arg(pointsToRead));
     const quint64 frameIndex = m_dataStore->appendFrame(frame);
-    appendDiagnosticTrace(
+    appendHotPathTrace(
         QString("processReadFrame appendFrame ok frameIndex=%1 points=%2").arg(frameIndex).arg(pointsToRead));
     emit frameStored(frameIndex, pointsToRead);
 
@@ -444,48 +517,73 @@ qint64 AcquisitionService::estimateFrameBytes(const AcquisitionFrame& frame) con
     return bytes;
 }
 
+bool AcquisitionService::flushSessionBinaryBuffer() {
+    if (m_sessionBinaryWriteBuffer.isEmpty()) {
+        return true;
+    }
+    if (m_sessionBinaryFile == nullptr || !m_sessionBinaryFile->isOpen()) {
+        return setError("Flush binary session buffer failed: session file is not open.");
+    }
+
+    const qint64 bytesToWrite = m_sessionBinaryWriteBuffer.size();
+    if (m_sessionBinaryFile->write(m_sessionBinaryWriteBuffer.constData(), bytesToWrite) != bytesToWrite) {
+        return setError(QString("Write session binary buffer failed: %1").arg(m_sessionBinaryFilePath));
+    }
+    m_sessionBinaryWriteBuffer.clear();
+    return true;
+}
+
+void AcquisitionService::appendFrameToSessionBinaryBuffer(const AcquisitionFrame& frame) {
+    const quint64 ts = static_cast<quint64>(frame.timestampMs);
+    const quint32 pointCount = frame.pointCountPerChannel;
+    const quint32 channelCount = kChannelCount;
+    m_sessionBinaryWriteBuffer.append(reinterpret_cast<const char*>(&ts), static_cast<int>(sizeof(ts)));
+    m_sessionBinaryWriteBuffer.append(reinterpret_cast<const char*>(&pointCount), static_cast<int>(sizeof(pointCount)));
+    m_sessionBinaryWriteBuffer.append(reinterpret_cast<const char*>(&channelCount), static_cast<int>(sizeof(channelCount)));
+
+    for (int i = 0; i < dsa::kChannelCount; ++i) {
+        const QVector<double>& channelData = frame.channels[i];
+        if (channelData.isEmpty()) {
+            continue;
+        }
+        const char* raw = reinterpret_cast<const char*>(channelData.constData());
+        const int bytes = static_cast<int>(channelData.size() * static_cast<int>(sizeof(double)));
+        m_sessionBinaryWriteBuffer.append(raw, bytes);
+    }
+}
+
 void AcquisitionService::writeFrameToDisk(const AcquisitionFrame& frame) {
     if (!shouldWriteToDisk()) {
         return;
     }
-    appendDiagnosticTrace(QString("writeFrameToDisk begin points=%1").arg(frame.pointCountPerChannel));
-    if (!ensureOutputFilesReady()) {
+    appendHotPathTrace(QString("writeFrameToDisk begin points=%1").arg(frame.pointCountPerChannel));
+    if ((m_sessionBinaryFile == nullptr || !m_sessionBinaryFile->isOpen() || kWriteLegacyChannelFiles) &&
+        !ensureOutputFilesReady()) {
         emit errorOccurred(lastError());
         return;
     }
 
     if (isContinuousModeForFileSplit() && m_sessionBinaryFile != nullptr && m_sessionBinaryFile->isOpen()) {
         const qint64 frameBytes = estimateFrameBytes(frame);
-        const qint64 projectedSize = m_sessionBinaryFile->size() + frameBytes;
+        const qint64 projectedSize = m_sessionBinaryFile->size() + m_sessionBinaryWriteBuffer.size() + frameBytes;
         if (projectedSize > kMaxContinuousFileBytes) {
+            if (!flushSessionBinaryBuffer()) {
+                emit errorOccurred(lastError());
+                return;
+            }
             if (!rotateSessionBinaryFile()) {
                 emit errorOccurred(QString("Rotate binary file failed: %1").arg(lastError()));
+                return;
             }
         }
     }
 
     if (m_sessionBinaryFile != nullptr && m_sessionBinaryFile->isOpen()) {
-        const quint64 ts = static_cast<quint64>(frame.timestampMs);
-        const quint32 pointCount = frame.pointCountPerChannel;
-        const quint32 channelCount = kChannelCount;
-        if (m_sessionBinaryFile->write(reinterpret_cast<const char*>(&ts), sizeof(ts)) != sizeof(ts) ||
-            m_sessionBinaryFile->write(reinterpret_cast<const char*>(&pointCount), sizeof(pointCount)) !=
-                sizeof(pointCount) ||
-            m_sessionBinaryFile->write(reinterpret_cast<const char*>(&channelCount), sizeof(channelCount)) !=
-                sizeof(channelCount)) {
-            emit errorOccurred(QString("Write session frame header failed: %1").arg(m_sessionBinaryFilePath));
-        } else {
-            for (int i = 0; i < dsa::kChannelCount; ++i) {
-                const QVector<double>& channelData = frame.channels[i];
-                if (channelData.isEmpty()) {
-                    continue;
-                }
-                const char* raw = reinterpret_cast<const char*>(channelData.constData());
-                const qint64 bytes = static_cast<qint64>(channelData.size() * static_cast<int>(sizeof(double)));
-                if (m_sessionBinaryFile->write(raw, bytes) != bytes) {
-                    emit errorOccurred(QString("Write session channel data failed: ch%1").arg(i + 1));
-                    break;
-                }
+        appendFrameToSessionBinaryBuffer(frame);
+        if (m_sessionBinaryWriteBuffer.size() >= kSessionFlushThresholdBytes) {
+            if (!flushSessionBinaryBuffer()) {
+                emit errorOccurred(lastError());
+                return;
             }
         }
     }
@@ -493,7 +591,7 @@ void AcquisitionService::writeFrameToDisk(const AcquisitionFrame& frame) {
     if (kWriteLegacyChannelFiles) {
         writeLegacyChannelFiles(frame);
     }
-    appendDiagnosticTrace(QString("writeFrameToDisk end points=%1").arg(frame.pointCountPerChannel));
+    appendHotPathTrace(QString("writeFrameToDisk end points=%1").arg(frame.pointCountPerChannel));
 }
 
 void AcquisitionService::writeLegacyChannelFiles(const AcquisitionFrame& frame) {
@@ -514,12 +612,14 @@ void AcquisitionService::writeLegacyChannelFiles(const AcquisitionFrame& frame) 
 void AcquisitionService::closeOutputFiles() {
     if (m_sessionBinaryFile != nullptr) {
         if (m_sessionBinaryFile->isOpen()) {
+            flushSessionBinaryBuffer();
             m_sessionBinaryFile->flush();
             m_sessionBinaryFile->close();
         }
         m_sessionBinaryFile.reset();
     }
     m_sessionBinaryFilePath.clear();
+    m_sessionBinaryWriteBuffer.clear();
 
     for (std::unique_ptr<QFile>& file : m_channelFiles) {
         if (file != nullptr) {

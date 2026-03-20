@@ -14,6 +14,10 @@ QString metricValueText(bool enabled) {
     return enabled ? QStringLiteral("\u8fd0\u884c\u4e2d") : QStringLiteral("\u5df2\u505c\u6b62");
 }
 
+QString deviceStatusText(bool opened) {
+    return opened ? QStringLiteral("\u5df2\u6253\u5f00") : QStringLiteral("\u672a\u6253\u5f00");
+}
+
 QString overflowText(bool overflow) {
     return overflow ? QStringLiteral("\u662f") : QStringLiteral("\u5426");
 }
@@ -80,6 +84,7 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
     statusLayout->setContentsMargins(10, 10, 10, 10);
     statusLayout->setSpacing(8);
 
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_deviceStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_acquisitionStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_plotStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_overflowLabel));
@@ -130,10 +135,16 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
 
     m_waveformGrid->setActiveChannels(m_selectorWidget->selectedChannels());
 
+    setDeviceOpened(false);
     setAcquisitionRunning(false);
     setPlottingRunning(false);
     setOverflow(false);
     setBufferPointCount(0);
+}
+
+void AcquisitionPage::setDeviceOpened(bool opened) {
+    m_deviceStatusLabel->setText(
+        QStringLiteral("\u8bbe\u5907\uff1a%1").arg(deviceStatusText(opened)));
 }
 
 void AcquisitionPage::setAcquisitionRunning(bool running) {
@@ -170,6 +181,13 @@ void AcquisitionPage::refreshWaveforms(int maxPoints) {
     m_waveformGrid->updateChannelData(data);
 }
 
+void AcquisitionPage::clearWaveforms() {
+    if (m_waveformGrid == nullptr) {
+        return;
+    }
+    m_waveformGrid->clearChannelData();
+}
+
 void AcquisitionPage::setSelectedChannels(const QVector<int>& channels) {
     if (m_selectorWidget == nullptr) {
         return;
@@ -187,6 +205,11 @@ void AcquisitionPage::updateBufferUsageStyle(unsigned int pointsPerChannel) {
         usageState = QStringLiteral("critical");
     } else if (pointsPerChannel >= (dsa::kMaxPointPerChannel * 3U) / 4U) {
         usageState = QStringLiteral("warning");
+    }
+
+    const QString currentBarState = m_bufferPointBar->property("usageState").toString();
+    if (currentBarState == usageState) {
+        return;
     }
 
     m_bufferPointBar->setProperty("usageState", usageState);

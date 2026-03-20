@@ -1,130 +1,154 @@
-# 16 通道动态信号采集与波形绘图桌面软件（Qt Widgets）
+# 16 通道动态信号采集与波形显示软件 🎛️📈
 
-本项目基于 **Qt 5.15.2 + C++17 + Qt Widgets + CMake**，主路径采用真实板卡 SDK（`atom_16ch_dsa_api.h + atom_16ch_dsa_api.dll`）的**运行时动态加载**方案，支持在没有 `.lib` 导入库时完成编译与运行。
+一套面向 16 通道数据采集、实时波形观察、项目化管理与历史数据读取的桌面软件。  
+软件采用 Qt Widgets 构建，适合本地采集、现场观察、参数配置、数据留存与后续离线分析。
 
-## 1. 目录结构
+## ✨ 软件亮点
 
-建议按以下结构放置工程与 SDK：
+- 🗂️ 支持新建、打开和管理采集项目，自动维护项目配置与数据目录
+- ⚙️ 支持采样率、采集模式、触发方式、时钟基准和定点点数等参数设置
+- 📡 支持设备打开、开始采集、停止采集、实时状态监控
+- 📈 支持 16 通道波形网格化显示，按需勾选通道查看
+- 🚦 支持缓存点数、缓存占用、溢出状态的实时提示
+- 🔌 支持两组 8 位 DIO 的方向设置、DO 写入和 DI 读取
+- 💾 采集数据自动落盘，便于后续分析、回放和归档
+- 🚀 支持一键启动、一键清空，适合现场快速操作
+- 🧪 支持 mock 模式，在没有真实设备时也能联调界面与流程
 
-```text
-project_root/
-  CMakeLists.txt
-  README.md
-  src/
-  resources/
-  third_party/
-    device_sdk/
-      atom_16ch_dsa_api.h
-      atom_16ch_dsa_api.dll
-      16通道动态信号采集板接口函数说明.pdf
-```
+## 🧭 主要功能
 
-程序会优先在以下路径搜索 DLL（按顺序尝试）：
+### 1. 项目管理
 
-1. 可执行文件目录：`<exe_dir>/atom_16ch_dsa_api.dll`
-2. `<exe_dir>/third_party/device_sdk/atom_16ch_dsa_api.dll`
-3. `<exe_dir>/../third_party/device_sdk/atom_16ch_dsa_api.dll`
-4. `<exe_dir>/../../third_party/device_sdk/atom_16ch_dsa_api.dll`
-5. 当前工作目录及其 `third_party/device_sdk`
-6. 系统 PATH（仅文件名 `atom_16ch_dsa_api.dll`）
+- 新建项目后会自动生成项目目录与项目文件
+- 项目文件使用 `.acqproj` 格式保存参数与路径信息
+- 软件支持最近项目列表，便于快速回到上一次工作现场
+- 可直接通过命令行打开项目文件
 
-## 2. 构建方式
-
-```bash
-mkdir build
-cd build
-cmake ..
-cmake --build .
-```
-
-> CMake 最低版本 3.16，要求 Qt 5.15.2，并启用 `Widgets` 与 `Svg` 组件。
-
-## 3. 为什么没有 `.lib` 也能编译
-
-工程不依赖 `target_link_libraries(... atom_16ch_dsa_api.lib)`，而是使用 `QLibrary` 在运行时：
-
-1. 加载 `atom_16ch_dsa_api.dll`
-2. 逐个解析函数地址（`resolve`）
-3. 通过函数指针调用接口
-
-这样即使只有 `.dll + .h`，也可正常编译并在运行时工作。
-
-## 4. 如果未来补充 `.lib`，如何改成隐式链接（可选）
-
-可以新增一个可选配置（不影响当前主实现）：
-
-1. 在 CMake 中添加导入库路径并链接 `.lib`
-2. 将 `Dsa16ChDllLoader` 替换为直接头文件声明调用
-3. 保留 `QLibrary` 路径作为 fallback（推荐）
-
-当前工程默认仍建议保留运行时加载，便于部署与版本切换。
-
-## 5. 程序启动与项目文件参数
-
-程序支持命令行直接传入 `.acqproj`：
+示例：
 
 ```bash
 Dsa16ChAcquisition.exe D:\Projects\Demo\Demo.acqproj
 ```
 
-如果参数中检测到 `.acqproj`，程序会在启动后自动打开该项目。
+### 2. 参数配置
 
-## 6. 项目文件关联（后续）
+- 采样率可选 204.8KSps、102.4KSps、51.2KSps、25.6KSps、12.8KSps、6.4KSps
+- 采集模式支持单次定点、连续采集、连续定点
+- 支持软件触发与外部触发
+- 支持板载时钟与外部时钟
+- 参数既可以直接应用，也可以保存到项目中
 
-可在 Windows 注册表中将 `.acqproj` 关联到本程序，双击项目文件即启动并自动打开。  
-本工程已具备命令行接收项目路径能力，关联时只需把 `%1` 传给可执行文件。
+### 3. 实时采集与波形显示
 
-## 7. 常见故障排查
+- 采集启动后会持续读取 16 通道数据
+- 软件会根据缓存水位自动调整读取与绘图节奏，尽量降低卡顿和积压
+- 波形区域支持按通道数量自适应布局
+- 少量通道时显示更完整的坐标轴，多通道时优先保证整体可视性
+- 当缓存接近上限时，界面会给出更明显的预警
 
-### 7.1 DLL 未找到 / SDK 未就绪
+### 4. 数据保存
 
-检查：
+- 当前版本默认将采集数据写入 `session_*.bin` 文件
+- 连续采集时会自动分卷，避免单个文件过大
+- 软件仍兼容旧版 `ch*.bin` 数据文件读取
+- 旧版地震采集格式 `Seismic_data_*.bin` 也提供了独立 MATLAB 读取脚本
 
-1. `atom_16ch_dsa_api.dll` 是否在搜索路径中
-2. 是否存在位数不匹配（x64 程序加载 x86 DLL）
-3. 是否缺少 DLL 依赖项（可用 Dependency Walker/Dependencies 检查）
+## 🧪 Mock 模式
 
-### 7.2 函数解析失败
-
-程序会明确提示失败函数名（例如 `dsa_16ch_read_data`）。  
-通常是 DLL 版本与头文件版本不匹配，请使用同一 SDK 版本。
-
-### 7.3 设备打开失败
-
-`dsa_16ch_open()` 成功应返回 `0`，失败 `-1`。  
-检查设备驱动、硬件连接、权限、以及是否已被其它进程占用。
-
-### 7.4 采集溢出
-
-连续采集模式需及时读取缓冲区；本工程在轮询中按阈值读取并检查：
-
-- `dsa_16ch_point_num_per_ch_in_buf_query`
-- `dsa_16ch_buf_overflow_query`
-
-高采样率下建议保持采集页运行并开启绘图或实时读数。
-
-## 8. 可选 mock 模式（仅降级）
-
-默认使用真实 DLL backend。  
-若硬件暂不可用，可设置环境变量后启动：
+如果当前只想联调界面或演示流程，可以使用 mock 模式启动软件：
 
 ```bash
 set DSA_USE_MOCK=1
 Dsa16ChAcquisition.exe
 ```
 
-此时在未打开设备时可使用 mock 数据进行界面联调；主路径仍为真实 DLL。
+此时软件会生成模拟波形数据，便于验证页面联动、绘图刷新和文件写入流程。
 
-## 9. 功能闭环清单
+## 🧰 MATLAB 读取数据文件
 
-1. 新建项目（创建目录 + `.acqproj` JSON）
-2. 打开项目
-3. 打开设备（真实 DLL API）
-4. 参数设置（采样/触发/时钟/定点点数）
-5. 采集开关（`dsa_16ch_start/stop`）
-6. 绘图开关（独立于采集服务）
-7. 16 通道动态布局波形显示
-8. 缓冲点数与溢出状态展示
-9. DIO 两组 8 位方向设置、DO 写入、DI 读取
-10. 软件信息对话框
+仓库内已经附带两个 MATLAB 脚本：
 
+- `read_dsa_data_and_plot.m`
+  用于读取当前主格式数据，支持：
+  - `session_*.bin`
+  - `session_*_partNNN.bin`
+  - 旧版 `ch*.bin`
+- `read_seismic_data_and_plot.m`
+  用于读取旧版地震采集输出的 `Seismic_data_*.bin`
+
+直接在 MATLAB 中运行即可：
+
+```matlab
+run("read_dsa_data_and_plot.m")
+run("read_seismic_data_and_plot.m")
+```
+
+如果你想在自己的脚本里快速读取当前主格式的 `session_*.bin`，可以参考下面的示例代码：
+
+```matlab
+fid = fopen("session_20260320_120000_000_part001.bin", "rb", "ieee-le");
+
+magic = fread(fid, 1, "uint32=>uint32");
+version = fread(fid, 1, "uint32=>uint32");
+channelCount = fread(fid, 1, "uint32=>uint32");
+
+if magic ~= uint32(hex2dec("31415344")) || channelCount ~= 16
+    error("Invalid session file.");
+end
+
+ch1 = [];
+
+while ~feof(fid)
+    ts = fread(fid, 1, "uint64=>uint64"); %#ok<NASGU>
+    if isempty(ts)
+        break;
+    end
+
+    pointCount = fread(fid, 1, "uint32=>uint32");
+    frameChannelCount = fread(fid, 1, "uint32=>uint32");
+    if isempty(pointCount) || isempty(frameChannelCount) || frameChannelCount ~= 16
+        break;
+    end
+
+    for ch = 1:16
+        values = fread(fid, [double(pointCount), 1], "double=>double");
+        if numel(values) ~= double(pointCount)
+            break;
+        end
+        if ch == 1
+            ch1 = [ch1; values]; %#ok<AGROW>
+        end
+    end
+end
+
+fclose(fid);
+
+plot(ch1, "LineWidth", 1.0);
+grid on;
+title("CH1");
+xlabel("Sample Index");
+ylabel("Amplitude");
+```
+
+## 🚀 典型使用流程
+
+1. 新建或打开项目 📁
+2. 打开设备 🔌
+3. 进入参数设置页调整采集参数 ⚙️
+4. 开始采集，观察缓存与溢出状态 📡
+5. 开始绘图，勾选需要关注的通道 📈
+6. 结束采集后使用 MATLAB 脚本进行离线分析 🧠
+
+## 💡 适用场景
+
+- 振动信号采集
+- 结构响应监测
+- 多通道动态信号记录
+- 地震/波形类数据现场采集与快速查看
+- 采集数据的项目化留存与后处理
+
+## 📌 说明
+
+- 软件重点面向“现场采集 + 本地观察 + 文件留存 + MATLAB 后处理”的完整流程
+- 当前仓库以主工程 `src/` 版本为准
+- 历史数据脚本仍保留对旧格式文件的兼容支持，方便已有数据继续使用
