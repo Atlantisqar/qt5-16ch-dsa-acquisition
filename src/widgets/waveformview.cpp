@@ -1,9 +1,19 @@
 #include "widgets/waveformview.h"
 
+#include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include <algorithm>
 #include <QtMath>
+
+namespace {
+constexpr double kDisplayMilliScale = 1000.0;
+
+QString formatMilliLabel(double valueMilli) {
+    return QString("%1 mV").arg(valueMilli, 0, 'f', 2);
+}
+}
 
 WaveformView::WaveformView(QWidget* parent)
     : QWidget(parent) {
@@ -50,35 +60,6 @@ void WaveformView::paintEvent(QPaintEvent* event) {
     painter.setBrush(QColor(255, 255, 255, 150));
     painter.drawRoundedRect(fullRect, 5.0, 5.0);
 
-    const qreal leftInset = m_showAxes ? 50.0 : 12.0;
-    const qreal topInset = 24.0;
-    const qreal rightInset = 12.0;
-    const qreal bottomInset = m_showAxes ? 32.0 : 12.0;
-    const QRectF plotRect = fullRect.adjusted(leftInset, topInset, -rightInset, -bottomInset);
-    painter.setPen(QPen(QColor("#E8ECF3"), 1));
-    const int gridX = 8;
-    const int gridY = 6;
-    for (int i = 0; i <= gridX; ++i) {
-        const qreal x = plotRect.left() + plotRect.width() * static_cast<qreal>(i) / gridX;
-        painter.drawLine(QPointF(x, plotRect.top()), QPointF(x, plotRect.bottom()));
-    }
-    for (int i = 0; i <= gridY; ++i) {
-        const qreal y = plotRect.top() + plotRect.height() * static_cast<qreal>(i) / gridY;
-        painter.drawLine(QPointF(plotRect.left(), y), QPointF(plotRect.right(), y));
-    }
-
-    painter.setPen(QColor("#1F2742"));
-    painter.setFont(QFont("Microsoft YaHei UI", 9, QFont::DemiBold));
-    painter.drawText(QRectF(fullRect.left() + 10, fullRect.top() + 4, 120, 18),
-                     Qt::AlignLeft | Qt::AlignVCenter,
-                     QString("CH%1").arg(m_channelIndex + 1));
-
-    painter.setPen(QColor("#7B7F87"));
-    painter.setFont(QFont("Microsoft YaHei UI", 8));
-    painter.drawText(QRectF(fullRect.right() - 90, fullRect.top() + 4, 80, 18),
-                     Qt::AlignRight | Qt::AlignVCenter,
-                     QString("%1 pts").arg(m_samples.size()));
-
     const int sampleCount = m_samples.size();
     double minVal = -1.0;
     double maxVal = 1.0;
@@ -95,22 +76,73 @@ void WaveformView::paintEvent(QPaintEvent* event) {
         }
     }
 
+    const QFont titleFont("Microsoft YaHei UI", 9, QFont::DemiBold);
+    const QFont statFont("Microsoft YaHei UI", 8);
+    const QFont axisFont("Microsoft YaHei UI", 7);
+
+    const int yTicks = 4;
+    QStringList yAxisLabels;
+    int maxYAxisLabelWidth = 0;
+    if (m_showAxes) {
+        const QFontMetrics axisMetrics(axisFont);
+        yAxisLabels.reserve(yTicks + 1);
+        for (int i = 0; i <= yTicks; ++i) {
+            const double valueMilli = (maxVal - (maxVal - minVal) * static_cast<double>(i) / yTicks)
+                                      * kDisplayMilliScale;
+            const QString label = formatMilliLabel(valueMilli);
+            yAxisLabels.push_back(label);
+            maxYAxisLabelWidth = qMax(maxYAxisLabelWidth, axisMetrics.horizontalAdvance(label));
+        }
+    }
+
+    const qreal topInset = 24.0;
+    const qreal rightInset = 12.0;
+    const qreal bottomInset = m_showAxes ? 32.0 : 12.0;
+    const qreal minimumPlotWidth = 32.0;
+    const qreal desiredLeftInset = m_showAxes ? qMax<qreal>(58.0, maxYAxisLabelWidth + 14.0) : 12.0;
+    const qreal maxLeftInset = qMax<qreal>(12.0, fullRect.width() - rightInset - minimumPlotWidth);
+    const qreal leftInset = qMin(desiredLeftInset, maxLeftInset);
+    const QRectF plotRect = fullRect.adjusted(leftInset, topInset, -rightInset, -bottomInset);
+
+    painter.setPen(QPen(QColor("#E8ECF3"), 1));
+    const int gridX = 8;
+    const int gridY = 6;
+    for (int i = 0; i <= gridX; ++i) {
+        const qreal x = plotRect.left() + plotRect.width() * static_cast<qreal>(i) / gridX;
+        painter.drawLine(QPointF(x, plotRect.top()), QPointF(x, plotRect.bottom()));
+    }
+    for (int i = 0; i <= gridY; ++i) {
+        const qreal y = plotRect.top() + plotRect.height() * static_cast<qreal>(i) / gridY;
+        painter.drawLine(QPointF(plotRect.left(), y), QPointF(plotRect.right(), y));
+    }
+
+    painter.setPen(QColor("#1F2742"));
+    painter.setFont(titleFont);
+    painter.drawText(QRectF(fullRect.left() + 10, fullRect.top() + 4, 120, 18),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     m_showAxes
+                         ? QString("CH%1 (mV)").arg(m_channelIndex + 1)
+                         : QString("CH%1").arg(m_channelIndex + 1));
+
+    painter.setPen(QColor("#7B7F87"));
+    painter.setFont(statFont);
+    painter.drawText(QRectF(fullRect.right() - 90, fullRect.top() + 4, 80, 18),
+                     Qt::AlignRight | Qt::AlignVCenter,
+                     QString("%1 pts").arg(m_samples.size()));
+
     if (m_showAxes) {
         painter.setPen(QPen(QColor("#AAB3C2"), 1));
         painter.drawLine(QPointF(plotRect.left(), plotRect.top()), QPointF(plotRect.left(), plotRect.bottom()));
         painter.drawLine(QPointF(plotRect.left(), plotRect.bottom()), QPointF(plotRect.right(), plotRect.bottom()));
 
         painter.setPen(QColor("#6F7785"));
-        painter.setFont(QFont("Microsoft YaHei UI", 7));
-
-        const int yTicks = 4;
+        painter.setFont(axisFont);
         for (int i = 0; i <= yTicks; ++i) {
             const qreal y = plotRect.top() + plotRect.height() * static_cast<qreal>(i) / yTicks;
-            const double value = maxVal - (maxVal - minVal) * static_cast<double>(i) / yTicks;
             painter.drawLine(QPointF(plotRect.left() - 4, y), QPointF(plotRect.left(), y));
             painter.drawText(QRectF(fullRect.left() + 2, y - 8, plotRect.left() - fullRect.left() - 8, 16),
                              Qt::AlignRight | Qt::AlignVCenter,
-                             QString::number(value, 'f', 2));
+                             yAxisLabels.value(i));
         }
 
         const int xTicks = 4;

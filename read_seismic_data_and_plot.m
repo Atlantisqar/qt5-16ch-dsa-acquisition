@@ -74,7 +74,7 @@ function [filePaths, canceled] = pickSeismicFiles()
             return;
         end
 
-        listing = dir(fullfile(folderPath, 'Seismic_data_*.bin'));
+        listing = dir(fullfile(folderPath, 'session_*.bin'));
         if isempty(listing)
             listing = dir(fullfile(folderPath, 'seismic*.bin'));
         end

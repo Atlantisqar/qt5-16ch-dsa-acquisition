@@ -12,6 +12,10 @@
 %   1) channels to read
 %   2) tail points to read per selected channel
 %   3) tail points to plot
+%   4) sampling rate used for frequency detection
+%
+% The script estimates the dominant frequency of each plotted channel and
+% shows it both in the figure and in the command window.
 
 clear; clc;
 
@@ -21,7 +25,7 @@ if canceled
     return;
 end
 
-[selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, canceled] = pickReadOptions();
+[selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, sampleRateHz, canceled] = pickReadOptions();
 if canceled
     fprintf('Canceled.\n');
     return;
@@ -37,7 +41,9 @@ if isempty(selectedChannels)
     error('No valid channels selected.');
 end
 
-plotDsaChannels(data, meta, selectedChannels, maxPlotPointsPerChannel);
+freqInfo = detectChannelFrequencies(data, selectedChannels, maxPlotPointsPerChannel, sampleRateHz);
+
+plotDsaChannels(data, meta, selectedChannels, maxPlotPointsPerChannel, freqInfo, sampleRateHz);
 
 fprintf('Done. Source format: %s\n', meta.format);
 fprintf('Total points per channel (max): %d\n', meta.totalPointsPerChannel);
@@ -47,7 +53,9 @@ if maxReadPointsPerChannel > 0
 else
     fprintf('Read tail points per selected channel: all\n');
 end
+fprintf('Sampling rate used for frequency detection: %.3f Hz\n', sampleRateHz);
 fprintf('Files used: %d\n', numel(meta.sourceFiles));
+printFrequencySummary(freqInfo, selectedChannels);
 
 %% ---------- Local functions ----------
 function [mode, filePaths, canceled] = pickInputFiles()
@@ -95,11 +103,12 @@ function [mode, filePaths, canceled] = pickInputFiles()
            '2) Only ch*.bin files']);
 end
 
-function [selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, canceled] = pickReadOptions()
+function [selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, sampleRateHz, canceled] = pickReadOptions()
     canceled = false;
     selectedChannels = 1:16;
     maxReadPointsPerChannel = 2400;
     maxPlotPointsPerChannel = 2400;
+    sampleRateHz = 25600;
 
     channelItems = arrayfun(@(c) sprintf('CH%d', c), 1:16, 'UniformOutput', false);
     [idx, ok] = listdlg('PromptString', 'Select channels to read:', ...
@@ -116,10 +125,11 @@ function [selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, ca
 
     answer = inputdlg( ...
         {'Tail points to READ per selected channel (0 = all):', ...
-         'Tail points to PLOT per selected channel:'}, ...
+         'Tail points to PLOT per selected channel:', ...
+         'Sampling rate in Hz for frequency detection:'}, ...
         'Read Options', ...
-        [1 58; 1 58], ...
-        {'2400', '2400'});
+        [1 58; 1 58; 1 58], ...
+        {'2400', '2400', '25600'});
     if isempty(answer)
         canceled = true;
         return;
@@ -127,14 +137,19 @@ function [selectedChannels, maxReadPointsPerChannel, maxPlotPointsPerChannel, ca
 
     readCount = str2double(strtrim(answer{1}));
     plotCount = str2double(strtrim(answer{2}));
+    sampleRate = str2double(strtrim(answer{3}));
     if isnan(readCount) || readCount < 0 || floor(readCount) ~= readCount
         error('Invalid read point count. Please input a non-negative integer.');
     end
     if isnan(plotCount) || plotCount <= 0 || floor(plotCount) ~= plotCount
         error('Invalid plot point count. Please input a positive integer.');
     end
+    if isnan(sampleRate) || ~isfinite(sampleRate) || sampleRate <= 0
+        error('Invalid sampling rate. Please input a positive number.');
+    end
     maxReadPointsPerChannel = readCount;
     maxPlotPointsPerChannel = plotCount;
+    sampleRateHz = sampleRate;
 end
 
 function [data, meta] = readDsaDataFromFiles(mode, filePaths, selectedChannels, maxReadPointsPerChannel)
@@ -318,10 +333,150 @@ function channels = sanitizeChannels(channels, maxChannel)
     channels = channels(channels >= 1 & channels <= maxChannel);
 end
 
-function plotDsaChannels(data, meta, selectedChannels, maxPlotPoints)
+function freqInfo = detectChannelFrequencies(data, selectedChannels, maxPlotPoints, sampleRateHz)
+    channelCount = numel(data.channels);
+    freqInfo = repmat(struct('channel', 0, ...
+                             'dominantHz', NaN, ...
+                             'sampleCount', 0, ...
+                             'status', "not_selected"), 1, channelCount);
+
+    for ch = 1:channelCount
+        freqInfo(ch).channel = ch;
+    end
+
+    for idx = 1:numel(selectedChannels)
+        ch = selectedChannels(idx);
+        y = getTailPoints(data.channels{ch}, maxPlotPoints);
+        info = estimateDominantFrequency(y, sampleRateHz);
+        info.channel = ch;
+        freqInfo(ch) = info;
+    end
+end
+
+function info = estimateDominantFrequency(y, sampleRateHz)
+    y = double(y(:));
+    y = y(isfinite(y));
+
+    info = struct('channel', 0, ...
+                  'dominantHz', NaN, ...
+                  'sampleCount', numel(y), ...
+                  'status', "unavailable");
+
+    if sampleRateHz <= 0
+        info.status = "disabled";
+        return;
+    end
+
+    if numel(y) < 8
+        info.status = "too_few_points";
+        return;
+    end
+
+    y = y - mean(y);
+    if max(y) - min(y) <= eps(max(abs(y)) + 1)
+        info.status = "flat_signal";
+        return;
+    end
+
+    n = numel(y);
+    window = 0.5 - 0.5 * cos(2 * pi * (0:n-1)' / max(1, n - 1));
+    spectrum = abs(fft(y .* window));
+    magnitude = spectrum(1:floor(n / 2) + 1);
+
+    if numel(magnitude) < 3
+        info.status = "too_few_points";
+        return;
+    end
+
+    magnitude(1) = 0;
+    [peakValue, peakIndex] = max(magnitude);
+    if ~isfinite(peakValue) || peakValue <= 0
+        info.status = "no_peak";
+        return;
+    end
+
+    peakOffset = 0;
+    if peakIndex > 1 && peakIndex < numel(magnitude)
+        left = magnitude(peakIndex - 1);
+        center = magnitude(peakIndex);
+        right = magnitude(peakIndex + 1);
+        denominator = left - 2 * center + right;
+        if isfinite(denominator) && abs(denominator) > eps(center)
+            peakOffset = 0.5 * (left - right) / denominator;
+            peakOffset = max(min(peakOffset, 1), -1);
+        end
+    end
+
+    dominantHz = ((peakIndex - 1) + peakOffset) * sampleRateHz / n;
+    if dominantHz <= 0 || dominantHz > sampleRateHz / 2
+        info.status = "invalid_peak";
+        return;
+    end
+
+    info.dominantHz = dominantHz;
+    info.status = "ok";
+end
+
+function yTail = getTailPoints(y, maxPoints)
+    y = y(:);
+    if isempty(y)
+        yTail = zeros(0, 1);
+        return;
+    end
+
+    if maxPoints <= 0 || numel(y) <= maxPoints
+        yTail = y;
+        return;
+    end
+
+    yTail = y(end - maxPoints + 1:end);
+end
+
+function label = buildFrequencyLabel(info)
+    if strcmp(info.status, "ok")
+        label = sprintf('CH%d | Dominant Freq %.3f Hz', info.channel, info.dominantHz);
+    else
+        label = sprintf('CH%d | Dominant Freq N/A', info.channel);
+    end
+end
+
+function printFrequencySummary(freqInfo, selectedChannels)
+    fprintf('Frequency summary (based on plotted tail data):\n');
+    for idx = 1:numel(selectedChannels)
+        ch = selectedChannels(idx);
+        info = freqInfo(ch);
+        if strcmp(info.status, "ok")
+            fprintf('  CH%d: %.3f Hz (points used: %d)\n', ch, info.dominantHz, info.sampleCount);
+        else
+            fprintf('  CH%d: N/A (%s)\n', ch, frequencyStatusToText(info.status));
+        end
+    end
+end
+
+function textValue = frequencyStatusToText(status)
+    switch char(status)
+        case 'ok'
+            textValue = 'ok';
+        case 'disabled'
+            textValue = 'frequency detection disabled';
+        case 'too_few_points'
+            textValue = 'too few points';
+        case 'flat_signal'
+            textValue = 'flat signal';
+        case 'no_peak'
+            textValue = 'no spectral peak found';
+        case 'invalid_peak'
+            textValue = 'invalid frequency peak';
+        otherwise
+            textValue = 'frequency unavailable';
+    end
+end
+
+function plotDsaChannels(data, meta, selectedChannels, maxPlotPoints, freqInfo, sampleRateHz)
     figure('Color', 'w', 'Name', 'DSA 16CH Plot', 'NumberTitle', 'off');
     nPlots = numel(selectedChannels);
-    topTitle = sprintf('Format: %s | Points/Ch(max): %d', meta.format, meta.totalPointsPerChannel);
+    topTitle = sprintf('Format: %s | Fs: %.3f Hz | Points/Ch(max): %d', ...
+                       meta.format, sampleRateHz, meta.totalPointsPerChannel);
 
     hasTiledLayout = exist('tiledlayout', 'file') == 2;
     hasSgTitle = exist('sgtitle', 'file') == 2;
@@ -341,14 +496,7 @@ function plotDsaChannels(data, meta, selectedChannels, maxPlotPoints)
     for k = 1:nPlots
         ch = selectedChannels(k);
         y = data.channels{ch};
-
-        if isempty(y)
-            yPlot = zeros(0, 1);
-        else
-            n = numel(y);
-            startIdx = max(1, n - maxPlotPoints + 1);
-            yPlot = y(startIdx:n);
-        end
+        yPlot = getTailPoints(y, maxPlotPoints);
 
         if hasTiledLayout
             nexttile;
@@ -365,14 +513,17 @@ function plotDsaChannels(data, meta, selectedChannels, maxPlotPoints)
         end
         grid on;
         ylabel(sprintf('CH%d', ch));
+        channelTitle = buildFrequencyLabel(freqInfo(ch));
+        if ~hasTiledLayout && ~hasSgTitle && ~hasSupTitle && k == 1
+            title(sprintf('%s\n%s', topTitle, channelTitle), 'Interpreter', 'none');
+        else
+            title(channelTitle, 'Interpreter', 'none');
+        end
         if k == nPlots
             xlabel('Sample Index (tail)');
         end
 
         % Very old MATLAB fallback when neither sgtitle nor suptitle exists.
-        if ~hasTiledLayout && ~hasSgTitle && ~hasSupTitle && k == 1
-            title(topTitle, 'Interpreter', 'none');
-        end
     end
 end
 

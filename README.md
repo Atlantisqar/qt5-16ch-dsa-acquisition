@@ -55,13 +55,7 @@ Dsa16ChAcquisition.exe D:\Projects\Demo\Demo.acqproj
 
 ## 🧪 Mock 模式
 
-如果当前只想联调界面或演示流程，可以使用 mock 模式启动软件：
-
-```bash
-set DSA_USE_MOCK=1
-Dsa16ChAcquisition.exe
-```
-
+如果当前只想联调界面或演示流程，可以使用 mock 模式启动软件。
 此时软件会生成模拟波形数据，便于验证页面联动、绘图刷新和文件写入流程。
 
 ## 🧰 MATLAB 读取数据文件
@@ -73,62 +67,6 @@ Dsa16ChAcquisition.exe
   - `session_*.bin`
   - `session_*_partNNN.bin`
   - 旧版 `ch*.bin`
-- `read_seismic_data_and_plot.m`
-  用于读取旧版地震采集输出的 `Seismic_data_*.bin`
-
-直接在 MATLAB 中运行即可：
-
-```matlab
-run("read_dsa_data_and_plot.m")
-run("read_seismic_data_and_plot.m")
-```
-
-如果你想在自己的脚本里快速读取当前主格式的 `session_*.bin`，可以参考下面的示例代码：
-
-```matlab
-fid = fopen("session_20260320_120000_000_part001.bin", "rb", "ieee-le");
-
-magic = fread(fid, 1, "uint32=>uint32");
-version = fread(fid, 1, "uint32=>uint32");
-channelCount = fread(fid, 1, "uint32=>uint32");
-
-if magic ~= uint32(hex2dec("31415344")) || channelCount ~= 16
-    error("Invalid session file.");
-end
-
-ch1 = [];
-
-while ~feof(fid)
-    ts = fread(fid, 1, "uint64=>uint64"); %#ok<NASGU>
-    if isempty(ts)
-        break;
-    end
-
-    pointCount = fread(fid, 1, "uint32=>uint32");
-    frameChannelCount = fread(fid, 1, "uint32=>uint32");
-    if isempty(pointCount) || isempty(frameChannelCount) || frameChannelCount ~= 16
-        break;
-    end
-
-    for ch = 1:16
-        values = fread(fid, [double(pointCount), 1], "double=>double");
-        if numel(values) ~= double(pointCount)
-            break;
-        end
-        if ch == 1
-            ch1 = [ch1; values]; %#ok<AGROW>
-        end
-    end
-end
-
-fclose(fid);
-
-plot(ch1, "LineWidth", 1.0);
-grid on;
-title("CH1");
-xlabel("Sample Index");
-ylabel("Amplitude");
-```
 
 ## 🧩 资源与附带代码说明
 
@@ -146,25 +84,6 @@ ylabel("Amplitude");
   当前主格式数据的 MATLAB 读取与绘图脚本
 - `read_seismic_data_and_plot.m`
   旧版地震采集数据的 MATLAB 读取与绘图脚本
-
-### Qt 资源是怎么用的
-
-程序使用 Qt Resource System 管理静态资源。  
-资源一旦写入 `.qrc`，运行时就可以直接通过 `:/` 路径访问，不需要再关心实际磁盘位置。
-
-示例：
-
-```cpp
-QFile styleFile(":/styles/main.qss");
-QIcon appIcon(":/icons/app_icon.png");
-button->setIcon(QIcon(":/menu-icons/folder-open_line.png"));
-```
-
-这种方式的好处是：
-
-- 📦 发布时更简单，样式和图标会随程序一起打包
-- 🧼 运行目录更干净，不需要把一堆图片散落在 exe 旁边
-- 🔁 后续替换图标、logo 或样式时，只需要更新资源文件并重新编译
 
 ### MATLAB 脚本适合做什么
 
