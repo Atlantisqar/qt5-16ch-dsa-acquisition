@@ -3,6 +3,12 @@
 namespace dsa {
 
 bool DsaAcquisitionSettings::validate(QString* error) const {
+    if (appMode > static_cast<unsigned int>(AppMode::Receiver)) {
+        if (error) {
+            *error = "Run mode enum value is invalid.";
+        }
+        return false;
+    }
     if (sampleRateSel > static_cast<unsigned int>(SampleRateSel::Rate6_4K)) {
         if (error) {
             *error = "采样率枚举值无效，应为 0~5。";
@@ -52,6 +58,8 @@ bool DsaAcquisitionSettings::validate(QString* error) const {
 
 QJsonObject DsaAcquisitionSettings::toJson() const {
     QJsonObject json;
+    json["appMode"] = static_cast<int>(appMode);
+    json["saveToDisk"] = saveToDisk;
     json["sampleRateSel"] = static_cast<int>(sampleRateSel);
     json["sampleMode"] = static_cast<int>(sampleMode);
     json["triggerSource"] = static_cast<int>(triggerSource);
@@ -63,6 +71,8 @@ QJsonObject DsaAcquisitionSettings::toJson() const {
 
 DsaAcquisitionSettings DsaAcquisitionSettings::fromJson(const QJsonObject& json) {
     DsaAcquisitionSettings settings;
+    settings.appMode = static_cast<unsigned int>(json.value("appMode").toInt(static_cast<int>(AppMode::Sender)));
+    settings.saveToDisk = json.value("saveToDisk").toBool(true);
     settings.sampleRateSel =
         static_cast<unsigned int>(json.value("sampleRateSel").toInt(static_cast<int>(SampleRateSel::Rate25_6K)));
     settings.sampleMode =
@@ -74,6 +84,73 @@ DsaAcquisitionSettings DsaAcquisitionSettings::fromJson(const QJsonObject& json)
     settings.clockBase =
         static_cast<unsigned int>(json.value("clockBase").toInt(static_cast<int>(ClockBase::Onboard)));
     settings.fixedPointCountPerCh = static_cast<unsigned int>(json.value("fixedPointCountPerCh").toInt(4096));
+    return settings;
+}
+
+bool DsaNetworkSettings::validate(QString* error) const {
+    if (!enabled) {
+        return true;
+    }
+    if (remoteHost.trimmed().isEmpty()) {
+        if (error) {
+            *error = "Network target host must not be empty.";
+        }
+        return false;
+    }
+    if (remotePort == 0 || remotePort > 65535U) {
+        if (error) {
+            *error = "Network target port must be in range 1~65535.";
+        }
+        return false;
+    }
+    return true;
+}
+
+QJsonObject DsaNetworkSettings::toJson() const {
+    QJsonObject json;
+    json["enabled"] = enabled;
+    json["remoteHost"] = remoteHost;
+    json["remotePort"] = static_cast<int>(remotePort);
+    return json;
+}
+
+DsaNetworkSettings DsaNetworkSettings::fromJson(const QJsonObject& json) {
+    DsaNetworkSettings settings;
+    settings.enabled = json.value("enabled").toBool(false);
+    settings.remoteHost = json.value("remoteHost").toString(QStringLiteral("127.0.0.1"));
+    settings.remotePort = static_cast<unsigned int>(json.value("remotePort").toInt(9000));
+    return settings;
+}
+
+bool DsaReceiverSettings::validate(QString* error) const {
+    if (listenHost.trimmed().isEmpty()) {
+        if (error) {
+            *error = "Receiver listen host must not be empty.";
+        }
+        return false;
+    }
+    if (listenPort == 0 || listenPort > 65535U) {
+        if (error) {
+            *error = "Receiver listen port must be in range 1~65535.";
+        }
+        return false;
+    }
+    return true;
+}
+
+QJsonObject DsaReceiverSettings::toJson() const {
+    QJsonObject json;
+    json["listenHost"] = listenHost;
+    json["listenPort"] = static_cast<int>(listenPort);
+    json["saveToDisk"] = saveToDisk;
+    return json;
+}
+
+DsaReceiverSettings DsaReceiverSettings::fromJson(const QJsonObject& json) {
+    DsaReceiverSettings settings;
+    settings.listenHost = json.value("listenHost").toString(QStringLiteral("0.0.0.0"));
+    settings.listenPort = static_cast<unsigned int>(json.value("listenPort").toInt(9000));
+    settings.saveToDisk = json.value("saveToDisk").toBool(true);
     return settings;
 }
 
@@ -153,6 +230,16 @@ QString clockBaseToText(unsigned int value) {
             return "1 - 外部时钟";
     }
     return "未知时钟基准";
+}
+
+QString appModeToText(unsigned int value) {
+    switch (static_cast<AppMode>(value)) {
+        case AppMode::Sender:
+            return QStringLiteral("发送端");
+        case AppMode::Receiver:
+            return QStringLiteral("接收端");
+    }
+    return QStringLiteral("未知模式");
 }
 
 }  // namespace dsa

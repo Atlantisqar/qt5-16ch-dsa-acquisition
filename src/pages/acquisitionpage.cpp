@@ -14,12 +14,17 @@ QString metricValueText(bool enabled) {
     return enabled ? QStringLiteral("\u8fd0\u884c\u4e2d") : QStringLiteral("\u5df2\u505c\u6b62");
 }
 
-QString deviceStatusText(bool opened) {
-    return opened ? QStringLiteral("\u5df2\u6253\u5f00") : QStringLiteral("\u672a\u6253\u5f00");
+QString modeStatusText(unsigned int mode) {
+    return dsa::appModeToText(mode);
 }
 
 QString overflowText(bool overflow) {
     return overflow ? QStringLiteral("\u662f") : QStringLiteral("\u5426");
+}
+
+QString networkStatusText(bool enabled, bool connected, const QString&) {
+    Q_UNUSED(enabled);
+    return connected ? QStringLiteral("\u5df2\u8fde\u63a5") : QStringLiteral("\u672a\u8fde\u63a5");
 }
 
 void refreshWidgetStyle(QWidget* widget) {
@@ -84,30 +89,31 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
     statusLayout->setContentsMargins(10, 10, 10, 10);
     statusLayout->setSpacing(8);
 
-    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_deviceStatusLabel));
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_modeStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_acquisitionStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_plotStatusLabel));
+    statusLayout->addWidget(createStatusMetricCard(statusCard, &m_networkStatusLabel));
     statusLayout->addWidget(createStatusMetricCard(statusCard, &m_overflowLabel));
 
-    QFrame* bufferCard = new QFrame(statusCard);
-    bufferCard->setObjectName("StatusMetricCard");
-    bufferCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    QVBoxLayout* bufferLayout = new QVBoxLayout(bufferCard);
+    m_bufferCard = new QFrame(statusCard);
+    m_bufferCard->setObjectName("StatusMetricCard");
+    m_bufferCard->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    QVBoxLayout* bufferLayout = new QVBoxLayout(m_bufferCard);
     bufferLayout->setContentsMargins(12, 10, 12, 10);
     bufferLayout->setSpacing(4);
 
-    m_bufferPointBar = new QProgressBar(bufferCard);
+    m_bufferPointBar = new QProgressBar(m_bufferCard);
     m_bufferPointBar->setObjectName("BufferProgressBar");
     m_bufferPointBar->setRange(0, static_cast<int>(dsa::kMaxPointPerChannel));
     m_bufferPointBar->setTextVisible(false);
     m_bufferPointBar->setFixedHeight(10);
 
-    m_bufferPointValueLabel = new QLabel(bufferCard);
+    m_bufferPointValueLabel = new QLabel(m_bufferCard);
     m_bufferPointValueLabel->setObjectName("MetricValue");
     m_bufferPointValueLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     bufferLayout->addWidget(m_bufferPointBar);
     bufferLayout->addWidget(m_bufferPointValueLabel);
-    statusLayout->addWidget(bufferCard, 2);
+    statusLayout->addWidget(m_bufferCard, 2);
 
     leftLayout->addWidget(statusCard, 0);
 
@@ -135,26 +141,46 @@ AcquisitionPage::AcquisitionPage(MultiChannelDataStore* dataStore, QWidget* pare
 
     m_waveformGrid->setActiveChannels(m_selectorWidget->selectedChannels());
 
+    setAppMode(static_cast<unsigned int>(dsa::AppMode::Sender));
     setDeviceOpened(false);
     setAcquisitionRunning(false);
     setPlottingRunning(false);
+    setNetworkState(false, false);
     setOverflow(false);
     setBufferPointCount(0);
 }
 
+void AcquisitionPage::setAppMode(unsigned int appMode) {
+    m_appMode = appMode;
+    m_modeStatusLabel->setText(QStringLiteral("\u6a21\u5f0f\uff1a%1").arg(modeStatusText(appMode)));
+    if (m_bufferCard != nullptr) {
+        const bool isReceiverMode = appMode == static_cast<unsigned int>(dsa::AppMode::Receiver);
+        m_bufferCard->setVisible(!isReceiverMode);
+    }
+}
+
 void AcquisitionPage::setDeviceOpened(bool opened) {
-    m_deviceStatusLabel->setText(
-        QStringLiteral("\u8bbe\u5907\uff1a%1").arg(deviceStatusText(opened)));
+    Q_UNUSED(opened);
 }
 
 void AcquisitionPage::setAcquisitionRunning(bool running) {
+    const QString prefix = (m_appMode == static_cast<unsigned int>(dsa::AppMode::Receiver))
+                               ? QStringLiteral("\u63a5\u6536")
+                               : QStringLiteral("\u91c7\u96c6");
     m_acquisitionStatusLabel->setText(
-        QStringLiteral("\u91c7\u96c6\uff1a%1").arg(metricValueText(running)));
+        QStringLiteral("%1\uff1a%2").arg(prefix).arg(metricValueText(running)));
 }
 
 void AcquisitionPage::setPlottingRunning(bool running) {
     m_plotStatusLabel->setText(
         QStringLiteral("\u7ed8\u56fe\uff1a%1").arg(metricValueText(running)));
+}
+
+void AcquisitionPage::setNetworkState(bool enabled, bool connected, const QString& message) {
+    m_networkStatusLabel->setText(
+        QStringLiteral("\u7f51\u7edc\uff1a%1").arg(networkStatusText(enabled, connected, message)));
+    m_networkStatusLabel->setProperty("alert", enabled && !connected);
+    refreshWidgetStyle(m_networkStatusLabel);
 }
 
 void AcquisitionPage::setOverflow(bool overflow) {

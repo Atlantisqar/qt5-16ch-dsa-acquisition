@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/acquisitiontcpstreamservice.h"
 #include "core/dsa16chdeviceservice.h"
 #include "core/multichanneldatastore.h"
 
@@ -23,7 +24,11 @@ public:
 
     void setAcquisitionSettings(const dsa::DsaAcquisitionSettings& settings);
     void setDataDirectory(const QString& dataDirectory);
+    void setNetworkSettings(const dsa::DsaNetworkSettings& settings);
     void setMockModeEnabled(bool enabled);
+    bool connectNetwork(bool force = false);
+    bool isNetworkConnected() const;
+    QString networkStatusMessage() const;
 
     bool startAcquisition();
     void stopAcquisition();
@@ -37,6 +42,7 @@ signals:
     void bufferPointCountUpdated(unsigned int pointsPerChannel);
     void overflowDetected(bool overflow);
     void frameStored(quint64 frameIndex, unsigned int pointCountPerChannel);
+    void networkStateChanged(bool enabled, bool connected, const QString& message);
 
 private slots:
     void onPollTimeout();
@@ -91,4 +97,5 @@ private:
     qint64 m_lastBufferUiUpdateMs = 0;
     qint64 m_lastOverflowQueryMs = 0;
     unsigned int m_lastReportedBufferPointCount = 0;
+    std::unique_ptr<AcquisitionTcpStreamService> m_networkStreamService;
 };

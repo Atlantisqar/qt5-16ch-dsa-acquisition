@@ -152,6 +152,28 @@ bool ProjectManager::updateAcquisitionSettings(const QJsonObject& acquisitionSet
     return saveProject(error);
 }
 
+bool ProjectManager::updateNetworkSettings(const QJsonObject& networkSettings, QString* error) {
+    if (!m_hasCurrentProject) {
+        if (error) {
+            *error = "褰撳墠娌℃湁椤圭洰锛屾棤娉曚繚瀛樼綉缁滀紶杈撳弬鏁般€?";
+        }
+        return false;
+    }
+    m_currentProject.networkSettings = networkSettings;
+    return saveProject(error);
+}
+
+bool ProjectManager::updateReceiverSettings(const QJsonObject& receiverSettings, QString* error) {
+    if (!m_hasCurrentProject) {
+        if (error) {
+            *error = "当前没有项目，无法保存接收端参数。";
+        }
+        return false;
+    }
+    m_currentProject.receiverSettings = receiverSettings;
+    return saveProject(error);
+}
+
 bool ProjectManager::updateDeviceSettings(const QJsonObject& deviceSettings, QString* error) {
     if (!m_hasCurrentProject) {
         if (error) {

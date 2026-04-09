@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/acquisitionservice.h"
+#include "core/acquisitiontcpreceiverservice.h"
 #include "core/dsa16chdeviceservice.h"
 #include "core/dsa16chdllloader.h"
 #include "core/multichanneldatastore.h"
@@ -40,8 +41,14 @@ private slots:
     void onShowAboutClicked();
 
     void onReadSettingsRequested();
-    void onApplySettingsRequested(const dsa::DsaAcquisitionSettings& settings);
-    void onSaveToProjectRequested(const dsa::DsaAcquisitionSettings& settings, const dsa::DsaDioSettings& dioSettings);
+    void onApplySettingsRequested(const dsa::DsaAcquisitionSettings& settings,
+                                  const dsa::DsaNetworkSettings& networkSettings,
+                                  const dsa::DsaReceiverSettings& receiverSettings);
+    void onConnectNetworkRequested(const dsa::DsaNetworkSettings& networkSettings);
+    void onSaveToProjectRequested(const dsa::DsaAcquisitionSettings& settings,
+                                  const dsa::DsaDioSettings& dioSettings,
+                                  const dsa::DsaNetworkSettings& networkSettings,
+                                  const dsa::DsaReceiverSettings& receiverSettings);
     void onDioDirectionSetRequested(unsigned int groupIndex, unsigned int direction);
     void onDioWriteRequested(unsigned int groupIndex, unsigned char doData);
     void onDioReadRequested(unsigned int groupIndex);
@@ -56,9 +63,11 @@ private:
     bool openProjectFile(const QString& projectFilePath, bool showMessage);
     bool loadHistoryDataToStore(int maxPointsPerChannel);
     QString resolveAcquisitionDataDirectory(QString* error) const;
+    unsigned int currentAppMode() const;
     void addRecentProject(const QString& projectFilePath);
     QStringList recentProjects() const;
     void refreshHomePageProject();
+    void handleNetworkStateChanged(bool enabled, bool connected, const QString& message);
     void updateSdkUi(bool ready, const QString& message);
     void updateDeviceUi(bool opened);
     void updateAcquisitionUi(bool running);
@@ -71,6 +80,7 @@ private:
     Dsa16ChDeviceService* m_deviceService = nullptr;
     MultiChannelDataStore* m_dataStore = nullptr;
     AcquisitionService* m_acquisitionService = nullptr;
+    AcquisitionTcpReceiverService* m_receiverService = nullptr;
     PlotService* m_plotService = nullptr;
 
     QWidget* m_centralRoot = nullptr;
@@ -94,4 +104,5 @@ private:
     QSettings m_appSettings;
     unsigned int m_lastBufferPointCount = 0;
     int m_plotTickCounter = 0;
+    bool m_manualNetworkConnectPending = false;
 };

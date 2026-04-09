@@ -15,6 +15,8 @@ public:
     bool saveProject(QString* error);
 
     bool updateAcquisitionSettings(const QJsonObject& acquisitionSettings, QString* error);
+    bool updateNetworkSettings(const QJsonObject& networkSettings, QString* error);
+    bool updateReceiverSettings(const QJsonObject& receiverSettings, QString* error);
     bool updateDeviceSettings(const QJsonObject& deviceSettings, QString* error);
     void clearCurrentProject();
 

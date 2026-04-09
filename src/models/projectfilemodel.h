@@ -16,6 +16,8 @@ struct ProjectFileModel {
     QString exportPath;
     QString cachePath;
     QJsonObject acquisitionSettings;
+    QJsonObject networkSettings;
+    QJsonObject receiverSettings;
     QJsonObject deviceSettings;
 
     bool isValid(QString* error) const;

@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt5 REQUIRED COMPONENTS Widgets Svg)
+find_package(Qt5 REQUIRED COMPONENTS Widgets Svg Network)
 
 set(APP_SOURCES
     src/main.cpp
@@ -30,6 +30,10 @@ set(APP_SOURCES
     src/core/multichanneldatastore.cpp
     src/core/acquisitionservice.h
     src/core/acquisitionservice.cpp
+    src/core/acquisitiontcpstreamservice.h
+    src/core/acquisitiontcpstreamservice.cpp
+    src/core/acquisitiontcpreceiverservice.h
+    src/core/acquisitiontcpreceiverservice.cpp
     src/core/plotservice.h
     src/core/plotservice.cpp
     src/widgets/channelselectorwidget.h
@@ -70,6 +74,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt5::Widgets
     Qt5::Svg
+    Qt5::Network
 )
 
 if(MSVC)

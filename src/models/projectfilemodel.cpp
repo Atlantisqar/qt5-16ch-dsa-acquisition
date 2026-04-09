@@ -41,6 +41,8 @@ QJsonObject ProjectFileModel::toJson() const {
     json["cachePath"] = cachePath;
     json["lastOpenedAt"] = lastOpenedAt.toString(Qt::ISODate);
     json["acquisitionSettings"] = acquisitionSettings;
+    json["networkSettings"] = networkSettings;
+    json["receiverSettings"] = receiverSettings;
     json["deviceSettings"] = deviceSettings;
     return json;
 }
@@ -60,6 +62,8 @@ bool ProjectFileModel::fromJson(const QJsonObject& json,
     model.cachePath = json.value("cachePath").toString();
     model.lastOpenedAt = QDateTime::fromString(json.value("lastOpenedAt").toString(), Qt::ISODate);
     model.acquisitionSettings = json.value("acquisitionSettings").toObject();
+    model.networkSettings = json.value("networkSettings").toObject();
+    model.receiverSettings = json.value("receiverSettings").toObject();
     model.deviceSettings = json.value("deviceSettings").toObject();
 
     if (!model.isValid(error)) {

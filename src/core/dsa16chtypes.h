@@ -9,6 +9,11 @@ constexpr int kChannelCount = 16;
 constexpr unsigned int kPointAlign = 16;
 constexpr unsigned int kMaxPointPerChannel = 32768;
 
+enum class AppMode : unsigned int {
+    Sender = 0,
+    Receiver = 1
+};
+
 enum class SampleRateSel : unsigned int {
     Rate204_8K = 0,
     Rate102_4K = 1,
@@ -45,6 +50,8 @@ enum class DioDirection : unsigned int {
 };
 
 struct DsaAcquisitionSettings {
+    unsigned int appMode = static_cast<unsigned int>(AppMode::Sender);
+    bool saveToDisk = true;
     unsigned int sampleRateSel = static_cast<unsigned int>(SampleRateSel::Rate25_6K);
     unsigned int sampleMode = static_cast<unsigned int>(SampleMode::Continuous);
     unsigned int triggerSource = static_cast<unsigned int>(TriggerSource::Software);
@@ -55,6 +62,26 @@ struct DsaAcquisitionSettings {
     bool validate(QString* error) const;
     QJsonObject toJson() const;
     static DsaAcquisitionSettings fromJson(const QJsonObject& json);
+};
+
+struct DsaNetworkSettings {
+    bool enabled = false;
+    QString remoteHost = QStringLiteral("127.0.0.1");
+    unsigned int remotePort = 9000;
+
+    bool validate(QString* error) const;
+    QJsonObject toJson() const;
+    static DsaNetworkSettings fromJson(const QJsonObject& json);
+};
+
+struct DsaReceiverSettings {
+    QString listenHost = QStringLiteral("0.0.0.0");
+    unsigned int listenPort = 9000;
+    bool saveToDisk = true;
+
+    bool validate(QString* error) const;
+    QJsonObject toJson() const;
+    static DsaReceiverSettings fromJson(const QJsonObject& json);
 };
 
 struct DsaDioSettings {
@@ -72,5 +99,6 @@ QString sampleModeToText(unsigned int value);
 QString triggerSourceToText(unsigned int value);
 QString externalTriggerEdgeToText(unsigned int value);
 QString clockBaseToText(unsigned int value);
+QString appModeToText(unsigned int value);
 
 }  // namespace dsa

@@ -70,7 +70,12 @@ AcquisitionService::AcquisitionService(Dsa16ChDeviceService* deviceService,
                                        MultiChannelDataStore* dataStore,
                                        QObject* parent)
     : QObject(parent), m_deviceService(deviceService), m_dataStore(dataStore) {
+    m_networkStreamService = std::make_unique<AcquisitionTcpStreamService>(this);
     connect(&m_pollTimer, &QTimer::timeout, this, &AcquisitionService::onPollTimeout);
+    connect(m_networkStreamService.get(),
+            &AcquisitionTcpStreamService::stateChanged,
+            this,
+            &AcquisitionService::networkStateChanged);
 }
 
 AcquisitionService::~AcquisitionService() {
@@ -85,8 +90,40 @@ void AcquisitionService::setDataDirectory(const QString& dataDirectory) {
     m_dataDirectory = dataDirectory;
 }
 
+void AcquisitionService::setNetworkSettings(const dsa::DsaNetworkSettings& settings) {
+    if (m_networkStreamService == nullptr) {
+        return;
+    }
+
+    m_networkStreamService->setNetworkSettings(settings);
+    if (!m_running) {
+        return;
+    }
+
+    if (settings.enabled) {
+        m_networkStreamService->startStreaming();
+    } else {
+        m_networkStreamService->stopStreaming();
+    }
+}
+
 void AcquisitionService::setMockModeEnabled(bool enabled) {
     m_mockModeEnabled = enabled;
+}
+
+bool AcquisitionService::connectNetwork(bool force) {
+    if (m_networkStreamService == nullptr) {
+        return false;
+    }
+    return m_networkStreamService->startStreaming(force);
+}
+
+bool AcquisitionService::isNetworkConnected() const {
+    return m_networkStreamService != nullptr && m_networkStreamService->isConnected();
+}
+
+QString AcquisitionService::networkStatusMessage() const {
+    return m_networkStreamService != nullptr ? m_networkStreamService->statusMessage() : QString();
 }
 
 bool AcquisitionService::startAcquisition() {
@@ -135,6 +172,9 @@ void AcquisitionService::stopAcquisition() {
     if (!m_running) {
         m_pollTimer.stop();
         m_mockRunning = false;
+        if (m_networkStreamService != nullptr) {
+            m_networkStreamService->stopStreaming();
+        }
         closeOutputFiles();
         return;
     }
@@ -150,6 +190,9 @@ void AcquisitionService::stopAcquisition() {
     }
 
     closeOutputFiles();
+    if (m_networkStreamService != nullptr) {
+        m_networkStreamService->stopStreaming();
+    }
     m_mockRunning = false;
     m_running = false;
     emit runningChanged(false);
@@ -180,6 +223,10 @@ bool AcquisitionService::startRealAcquisition() {
         m_deviceService->stopAcquisition();
         return false;
     }
+    if (m_networkStreamService != nullptr && !m_networkStreamService->startStreaming()) {
+        m_deviceService->stopAcquisition();
+        return setError(m_networkStreamService->statusMessage());
+    }
 
     m_mockRunning = false;
     m_running = true;
@@ -192,6 +239,9 @@ bool AcquisitionService::startMockAcquisition() {
     appendDiagnosticTrace("startMockAcquisition begin");
     if (shouldWriteToDisk() && !ensureOutputFilesReady()) {
         return false;
+    }
+    if (m_networkStreamService != nullptr && !m_networkStreamService->startStreaming()) {
+        return setError(m_networkStreamService->statusMessage());
     }
 
     m_mockRunning = true;
@@ -380,6 +430,9 @@ void AcquisitionService::processReadFrame(unsigned int pointsToRead,
     if (shouldWriteToDisk()) {
         writeFrameToDisk(frame);
     }
+    if (m_networkStreamService != nullptr) {
+        m_networkStreamService->sendFrame(frame, m_settings);
+    }
 }
 
 void AcquisitionService::generateMockAndStore(unsigned int pointCount) {
@@ -407,10 +460,13 @@ void AcquisitionService::generateMockAndStore(unsigned int pointCount) {
     if (shouldWriteToDisk()) {
         writeFrameToDisk(frame);
     }
+    if (m_networkStreamService != nullptr) {
+        m_networkStreamService->sendFrame(frame, m_settings);
+    }
 }
 
 bool AcquisitionService::shouldWriteToDisk() const {
-    return !m_dataDirectory.trimmed().isEmpty();
+    return m_settings.saveToDisk && !m_dataDirectory.trimmed().isEmpty();
 }
 
 bool AcquisitionService::ensureOutputFilesReady() {

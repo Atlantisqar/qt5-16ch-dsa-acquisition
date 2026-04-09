@@ -29,6 +29,7 @@ MainWindow::MainWindow(const QString& startupProjectFile, QWidget* parent)
     m_deviceService = new Dsa16ChDeviceService(m_dllLoader, this);
     m_dataStore = new MultiChannelDataStore(65536, this);
     m_acquisitionService = new AcquisitionService(m_deviceService, m_dataStore, this);
+    m_receiverService = new AcquisitionTcpReceiverService(m_dataStore, this);
     m_plotService = new PlotService(this);
 
     if (qEnvironmentVariableIsSet("DSA_USE_MOCK")) {
@@ -38,6 +39,8 @@ MainWindow::MainWindow(const QString& startupProjectFile, QWidget* parent)
     buildUi();
     bindSignals();
     initializeSdk();
+    m_acquisitionService->setNetworkSettings(dsa::DsaNetworkSettings{});
+    m_receiverService->setReceiverSettings(dsa::DsaReceiverSettings{});
     refreshHomePageProject();
     m_homePage->setRecentProjects(recentProjects());
 
@@ -51,6 +54,7 @@ MainWindow::~MainWindow() = default;
 void MainWindow::closeEvent(QCloseEvent* event) {
     m_plotService->stopPlotting();
     m_acquisitionService->stopAcquisition();
+    m_receiverService->stopReceiving();
     m_deviceService->shutdown();
     QMainWindow::closeEvent(event);
 }
@@ -83,6 +87,10 @@ void MainWindow::onOpenProjectClicked() {
 }
 
 void MainWindow::onOpenDeviceClicked() {
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Receiver)) {
+        showError("打开设备失败", "接收端模式下不需要打开本地采集设备。");
+        return;
+    }
     if (!m_deviceService->sdkReady()) {
         showError("打开设备失败", QString("SDK 未就绪。\n%1").arg(m_deviceService->sdkStatusMessage()));
         return;
@@ -105,16 +113,74 @@ void MainWindow::onShowAcquisitionPageClicked() {
 }
 
 void MainWindow::onToggleAcquisitionClicked() {
-    if (m_acquisitionService->isRunning()) {
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Sender) && m_acquisitionService->isRunning()) {
         m_acquisitionService->stopAcquisition();
         return;
     }
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Receiver) && m_receiverService->isRunning()) {
+        m_receiverService->stopReceiving();
+        return;
+    }
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Receiver) && m_acquisitionService->isRunning()) {
+        m_acquisitionService->stopAcquisition();
+    }
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Sender) && m_receiverService->isRunning()) {
+        m_receiverService->stopReceiving();
+    }
 
     dsa::DsaAcquisitionSettings settings;
+    dsa::DsaNetworkSettings networkSettings;
+    dsa::DsaReceiverSettings receiverSettings;
     QString validationError;
     if (!m_settingsPage->collectSettings(settings, &validationError)) {
         showError("参数错误", validationError);
         return;
+    }
+    if (!m_settingsPage->collectNetworkSettings(networkSettings, &validationError)) {
+        showError("参数错误", validationError);
+        return;
+    }
+    if (!m_settingsPage->collectReceiverSettings(receiverSettings, &validationError)) {
+        showError("参数错误", validationError);
+        return;
+    }
+
+    m_acquisitionPage->setAppMode(settings.appMode);
+
+    if (settings.appMode == static_cast<unsigned int>(dsa::AppMode::Receiver)) {
+        QString dataDir;
+        if (receiverSettings.saveToDisk) {
+            QString dataDirError;
+            dataDir = resolveAcquisitionDataDirectory(&dataDirError);
+            if (dataDir.isEmpty()) {
+                showError("开始接收失败", dataDirError);
+                return;
+            }
+        }
+        m_receiverService->setReceiverSettings(receiverSettings);
+        m_receiverService->setDataDirectory(dataDir);
+        if (!m_receiverService->startReceiving()) {
+            showError("开始接收失败", m_receiverService->statusMessage());
+            return;
+        }
+        statusBar()->showMessage(QString("接收端已启动，监听 %1:%2")
+                                     .arg(receiverSettings.listenHost)
+                                     .arg(receiverSettings.listenPort),
+                                 5000);
+        return;
+    }
+
+    if (!settings.saveToDisk && !networkSettings.enabled) {
+        const QMessageBox::StandardButton choice = QMessageBox::question(
+            this,
+            "确认开始采集",
+            "当前已关闭本地落盘，且未启用网络传输。\n采集数据将只保留在内存中，停止后无法恢复。\n是否仍然继续开始采集？",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (choice != QMessageBox::Yes) {
+            statusBar()->showMessage("已取消开始采集。", 3000);
+            return;
+        }
     }
 
     if (m_deviceService->isDeviceOpen()) {
@@ -128,11 +194,15 @@ void MainWindow::onToggleAcquisitionClicked() {
     }
 
     m_acquisitionService->setAcquisitionSettings(settings);
-    QString dataDirError;
-    const QString dataDir = resolveAcquisitionDataDirectory(&dataDirError);
-    if (dataDir.isEmpty()) {
-        showError("开始采集失败", dataDirError);
-        return;
+    m_acquisitionService->setNetworkSettings(networkSettings);
+    QString dataDir;
+    if (settings.saveToDisk) {
+        QString dataDirError;
+        dataDir = resolveAcquisitionDataDirectory(&dataDirError);
+        if (dataDir.isEmpty()) {
+            showError("开始采集失败", dataDirError);
+            return;
+        }
     }
     m_acquisitionService->setDataDirectory(dataDir);
 
@@ -140,8 +210,10 @@ void MainWindow::onToggleAcquisitionClicked() {
         showError("开始采集失败", m_acquisitionService->lastError());
         return;
     }
-    if (!m_projectManager->hasCurrentProject()) {
+    if (settings.saveToDisk && !m_projectManager->hasCurrentProject()) {
         statusBar()->showMessage(QString("未打开项目，数据将保存到：%1").arg(dataDir), 6000);
+    } else if (!settings.saveToDisk) {
+        statusBar()->showMessage("采集已开始，当前不落盘，仅保留内存数据并按网络设置发送。", 5000);
     }
 }
 
@@ -151,7 +223,7 @@ void MainWindow::onTogglePlotClicked() {
         return;
     }
 
-    if (!m_acquisitionService->isRunning()) {
+    if (!m_acquisitionService->isRunning() && !m_receiverService->isRunning()) {
         const bool loaded = loadHistoryDataToStore(4096);
         if (!loaded) {
             statusBar()->showMessage("未检测到历史数据，绘图将等待实时数据。", 5000);
@@ -162,6 +234,10 @@ void MainWindow::onTogglePlotClicked() {
 }
 
 void MainWindow::onQuickStartClicked() {
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Receiver)) {
+        onToggleAcquisitionClicked();
+        return;
+    }
     if (m_acquisitionService->isRunning()) {
         m_stack->setCurrentWidget(m_acquisitionPage);
         statusBar()->showMessage("采集已在运行。", 3000);
@@ -169,9 +245,14 @@ void MainWindow::onQuickStartClicked() {
     }
 
     const dsa::DsaAcquisitionSettings defaultSettings{};
+    const dsa::DsaNetworkSettings defaultNetworkSettings{};
     QString validationError;
     if (!defaultSettings.validate(&validationError)) {
         showError("一键启动失败", QString("默认参数无效：%1").arg(validationError));
+        return;
+    }
+    if (!defaultNetworkSettings.validate(&validationError)) {
+        showError("一键启动失败", QString("默认网络参数无效：%1").arg(validationError));
         return;
     }
 
@@ -195,14 +276,20 @@ void MainWindow::onQuickStartClicked() {
     }
 
     m_settingsPage->setSettings(defaultSettings);
+    m_settingsPage->setNetworkSettings(defaultNetworkSettings);
     m_acquisitionService->setAcquisitionSettings(defaultSettings);
+    m_acquisitionService->setNetworkSettings(defaultNetworkSettings);
+    m_acquisitionPage->setAppMode(defaultSettings.appMode);
     m_settingsPage->setStatusMessage("已应用默认参数并启动采集流程。");
 
-    QString dataDirError;
-    const QString dataDir = resolveAcquisitionDataDirectory(&dataDirError);
-    if (dataDir.isEmpty()) {
-        showError("一键启动失败", dataDirError);
-        return;
+    QString dataDir;
+    if (defaultSettings.saveToDisk) {
+        QString dataDirError;
+        dataDir = resolveAcquisitionDataDirectory(&dataDirError);
+        if (dataDir.isEmpty()) {
+            showError("一键启动失败", dataDirError);
+            return;
+        }
     }
     m_acquisitionService->setDataDirectory(dataDir);
 
@@ -214,14 +301,18 @@ void MainWindow::onQuickStartClicked() {
     m_stack->setCurrentWidget(m_acquisitionPage);
     if (hasProject) {
         statusBar()->showMessage("一键启动完成：设备已打开，默认参数已应用，采集已开始。", 4000);
-    } else {
+    } else if (defaultSettings.saveToDisk) {
         statusBar()->showMessage(QString("一键启动完成：已开始采集，数据保存到：%1").arg(dataDir), 6000);
+    } else {
+        statusBar()->showMessage("一键启动完成：已开始采集，当前不落盘。", 4000);
     }
 }
 
 void MainWindow::onQuickClearClicked() {
+    m_manualNetworkConnectPending = false;
     m_plotService->stopPlotting();
     m_acquisitionService->stopAcquisition();
+    m_receiverService->stopReceiving();
     m_deviceService->shutdown();
     m_deviceService->resetCachedState();
     initializeSdk();
@@ -230,14 +321,23 @@ void MainWindow::onQuickClearClicked() {
     m_acquisitionService->setDataDirectory(QString());
 
     const dsa::DsaAcquisitionSettings defaultSettings{};
+    const dsa::DsaNetworkSettings defaultNetworkSettings{};
+    const dsa::DsaReceiverSettings defaultReceiverSettings{};
     m_settingsPage->setSettings(defaultSettings);
+    m_settingsPage->setNetworkSettings(defaultNetworkSettings);
+    m_settingsPage->setReceiverSettings(defaultReceiverSettings);
     m_settingsPage->setDioInputValue(0x00);
     m_settingsPage->setStatusMessage("已恢复默认状态。");
     m_acquisitionService->setAcquisitionSettings(defaultSettings);
+    m_acquisitionService->setNetworkSettings(defaultNetworkSettings);
+    m_receiverService->setReceiverSettings(defaultReceiverSettings);
+    m_receiverService->setDataDirectory(QString());
 
+    m_acquisitionPage->setAppMode(defaultSettings.appMode);
     m_acquisitionPage->setSelectedChannels(QVector<int>{0, 1, 2, 3});
     m_acquisitionPage->setAcquisitionRunning(false);
     m_acquisitionPage->setPlottingRunning(false);
+    m_acquisitionPage->setNetworkState(false, false);
     m_acquisitionPage->setOverflow(false);
     m_acquisitionPage->setBufferPointCount(0);
     m_acquisitionPage->clearWaveforms();
@@ -260,14 +360,32 @@ void MainWindow::onShowAboutClicked() {
 }
 
 void MainWindow::onReadSettingsRequested() {
+    if (currentAppMode() == static_cast<unsigned int>(dsa::AppMode::Receiver)) {
+        m_settingsPage->setStatusMessage("接收端模式下没有本地设备参数可读取。");
+        return;
+    }
     m_settingsPage->setSettings(m_deviceService->currentSettings());
     m_settingsPage->setStatusMessage("已加载当前缓存配置。");
 }
 
-void MainWindow::onApplySettingsRequested(const dsa::DsaAcquisitionSettings& settings) {
+void MainWindow::onApplySettingsRequested(const dsa::DsaAcquisitionSettings& settings,
+                                          const dsa::DsaNetworkSettings& networkSettings,
+                                          const dsa::DsaReceiverSettings& receiverSettings) {
+    m_manualNetworkConnectPending = false;
+    m_acquisitionPage->setAppMode(settings.appMode);
+    m_acquisitionService->setAcquisitionSettings(settings);
+    m_acquisitionService->setNetworkSettings(networkSettings);
+    m_receiverService->setReceiverSettings(receiverSettings);
+    updateDeviceUi(m_deviceService->isDeviceOpen());
+    if (settings.appMode == static_cast<unsigned int>(dsa::AppMode::Receiver)) {
+        m_settingsPage->setStatusMessage("接收端参数已应用。");
+        updateAcquisitionUi(m_receiverService->isRunning());
+        updateDeviceUi(false);
+        return;
+    }
     if (!m_deviceService->isDeviceOpen()) {
-        m_acquisitionService->setAcquisitionSettings(settings);
-        m_settingsPage->setStatusMessage("设备未打开，已保存为本地待应用参数。");
+        m_settingsPage->setStatusMessage("设备未打开，采集参数和网络参数已保存为本地待应用配置。");
+        updateAcquisitionUi(m_acquisitionService->isRunning());
         return;
     }
     if (!m_deviceService->setAcquisitionSettings(settings)) {
@@ -275,12 +393,50 @@ void MainWindow::onApplySettingsRequested(const dsa::DsaAcquisitionSettings& set
         showError("应用参数失败", m_deviceService->lastError());
         return;
     }
-    m_acquisitionService->setAcquisitionSettings(settings);
-    m_settingsPage->setStatusMessage("参数已成功下发到设备。");
+    m_settingsPage->setStatusMessage("采集参数已下发到设备，网络参数已应用。");
+    updateAcquisitionUi(m_acquisitionService->isRunning());
+}
+
+void MainWindow::onConnectNetworkRequested(const dsa::DsaNetworkSettings& networkSettings) {
+    if (!networkSettings.enabled) {
+        m_manualNetworkConnectPending = false;
+        m_settingsPage->setStatusMessage("请先启用网络传输。", true);
+        statusBar()->showMessage("请先启用网络传输。", 4000);
+        return;
+    }
+
+    m_manualNetworkConnectPending = true;
+    m_acquisitionService->setNetworkSettings(networkSettings);
+    if (!m_acquisitionService->connectNetwork(true)) {
+        m_manualNetworkConnectPending = false;
+        const QString message = m_acquisitionService->networkStatusMessage().trimmed().isEmpty()
+                                    ? QString("发起网络连接失败。")
+                                    : m_acquisitionService->networkStatusMessage();
+        m_settingsPage->setStatusMessage(message, true);
+        statusBar()->showMessage(message, 5000);
+        showError("网络连接失败", message);
+        return;
+    }
+
+    if (m_acquisitionService->isNetworkConnected()) {
+        m_manualNetworkConnectPending = false;
+        const QString message = m_acquisitionService->networkStatusMessage().trimmed().isEmpty()
+                                    ? QString("网络已连接。")
+                                    : m_acquisitionService->networkStatusMessage();
+        m_settingsPage->setStatusMessage(message);
+        statusBar()->showMessage(message, 5000);
+        QMessageBox::information(this, "网络连接", message);
+        return;
+    }
+
+    m_settingsPage->setStatusMessage("正在连接网络目标...");
+    statusBar()->showMessage("正在连接网络目标...", 5000);
 }
 
 void MainWindow::onSaveToProjectRequested(const dsa::DsaAcquisitionSettings& settings,
-                                          const dsa::DsaDioSettings& dioSettings) {
+                                          const dsa::DsaDioSettings& dioSettings,
+                                          const dsa::DsaNetworkSettings& networkSettings,
+                                          const dsa::DsaReceiverSettings& receiverSettings) {
     if (!m_projectManager->hasCurrentProject()) {
         showError("保存失败", "当前没有打开的项目。");
         return;
@@ -291,11 +447,19 @@ void MainWindow::onSaveToProjectRequested(const dsa::DsaAcquisitionSettings& set
         showError("保存失败", error);
         return;
     }
+    if (!m_projectManager->updateNetworkSettings(networkSettings.toJson(), &error)) {
+        showError("保存失败", error);
+        return;
+    }
+    if (!m_projectManager->updateReceiverSettings(receiverSettings.toJson(), &error)) {
+        showError("保存失败", error);
+        return;
+    }
     if (!m_projectManager->updateDeviceSettings(dioSettings.toJson(), &error)) {
         showError("保存失败", error);
         return;
     }
-    m_settingsPage->setStatusMessage("参数已保存到项目文件。");
+    m_settingsPage->setStatusMessage("采集参数、网络参数和 DIO 参数已保存到项目文件。");
     statusBar()->showMessage("项目参数已保存。", 3000);
 }
 
@@ -483,14 +647,32 @@ void MainWindow::bindSignals() {
             const dsa::DsaAcquisitionSettings settings = dsa::DsaAcquisitionSettings::fromJson(project.acquisitionSettings);
             m_settingsPage->setSettings(settings);
             m_acquisitionService->setAcquisitionSettings(settings);
+            m_acquisitionPage->setAppMode(settings.appMode);
         }
+        const dsa::DsaNetworkSettings networkSettings = dsa::DsaNetworkSettings::fromJson(project.networkSettings);
+        m_settingsPage->setNetworkSettings(networkSettings);
+        m_acquisitionService->setNetworkSettings(networkSettings);
+        const dsa::DsaReceiverSettings receiverSettings = dsa::DsaReceiverSettings::fromJson(project.receiverSettings);
+        m_settingsPage->setReceiverSettings(receiverSettings);
+        m_receiverService->setReceiverSettings(receiverSettings);
+        updateDeviceUi(m_deviceService->isDeviceOpen());
+        updateAcquisitionUi(false);
     });
 
     connect(m_deviceService, &Dsa16ChDeviceService::sdkStateChanged, this, &MainWindow::updateSdkUi);
     connect(m_deviceService, &Dsa16ChDeviceService::deviceOpenStateChanged, this, &MainWindow::updateDeviceUi);
 
+    connect(m_settingsPage, &SettingsPage::appModeChanged, this, [this](unsigned int appMode) {
+        if (m_acquisitionService->isRunning() || m_receiverService->isRunning()) {
+            return;
+        }
+        m_acquisitionPage->setAppMode(appMode);
+        updateDeviceUi(m_deviceService->isDeviceOpen());
+        updateAcquisitionUi(false);
+    });
     connect(m_settingsPage, &SettingsPage::readSettingsRequested, this, &MainWindow::onReadSettingsRequested);
     connect(m_settingsPage, &SettingsPage::applySettingsRequested, this, &MainWindow::onApplySettingsRequested);
+    connect(m_settingsPage, &SettingsPage::connectNetworkRequested, this, &MainWindow::onConnectNetworkRequested);
     connect(m_settingsPage, &SettingsPage::saveToProjectRequested, this, &MainWindow::onSaveToProjectRequested);
     connect(m_settingsPage, &SettingsPage::dioDirectionSetRequested, this, &MainWindow::onDioDirectionSetRequested);
     connect(m_settingsPage, &SettingsPage::dioWriteRequested, this, &MainWindow::onDioWriteRequested);
@@ -505,6 +687,27 @@ void MainWindow::bindSignals() {
 
     connect(m_plotService, &PlotService::plottingChanged, this, &MainWindow::updatePlotUi);
     connect(m_plotService, &PlotService::plottingTick, this, &MainWindow::onPlotTick);
+    connect(m_acquisitionService,
+            &AcquisitionService::networkStateChanged,
+            m_acquisitionPage,
+            &AcquisitionPage::setNetworkState);
+    connect(m_acquisitionService,
+            &AcquisitionService::networkStateChanged,
+            this,
+            &MainWindow::handleNetworkStateChanged);
+    connect(m_receiverService, &AcquisitionTcpReceiverService::runningChanged, this, &MainWindow::updateAcquisitionUi);
+    connect(m_receiverService,
+            &AcquisitionTcpReceiverService::bufferPointCountUpdated,
+            this,
+            &MainWindow::onBufferPointCountUpdated);
+    connect(m_receiverService,
+            &AcquisitionTcpReceiverService::networkStateChanged,
+            m_acquisitionPage,
+            &AcquisitionPage::setNetworkState);
+    connect(m_receiverService,
+            &AcquisitionTcpReceiverService::errorOccurred,
+            this,
+            [this](const QString& message) { statusBar()->showMessage(message, 5000); });
 }
 
 void MainWindow::initializeSdk() {
@@ -723,19 +926,78 @@ void MainWindow::refreshHomePageProject() {
     m_homePage->setProjectInfo(&project);
 }
 
+void MainWindow::handleNetworkStateChanged(bool enabled, bool connected, const QString& message) {
+    if (!m_manualNetworkConnectPending) {
+        return;
+    }
+
+    if (!enabled) {
+        m_manualNetworkConnectPending = false;
+        m_settingsPage->setStatusMessage("网络传输未启用。", true);
+        statusBar()->showMessage("网络传输未启用。", 5000);
+        return;
+    }
+
+    if (connected) {
+        m_manualNetworkConnectPending = false;
+        const QString text = message.trimmed().isEmpty() ? QString("网络连接成功。") : message;
+        m_settingsPage->setStatusMessage(text);
+        statusBar()->showMessage(text, 5000);
+        QMessageBox::information(this, "网络连接", text);
+        return;
+    }
+
+    if (message.contains(QStringLiteral("正在连接")) || message == QStringLiteral("已更新")) {
+        m_settingsPage->setStatusMessage("正在连接网络目标...");
+        statusBar()->showMessage("正在连接网络目标...", 3000);
+        return;
+    }
+
+    const QString text = message.trimmed().isEmpty() ? QString("网络连接失败。") : message;
+    m_manualNetworkConnectPending = false;
+    m_settingsPage->setStatusMessage(text, true);
+    statusBar()->showMessage(text, 6000);
+    showError("网络连接失败", text);
+}
+
 void MainWindow::updateSdkUi(bool ready, const QString& message) {
     m_homePage->setSdkStatus(ready, message);
     statusBar()->showMessage(message, 5000);
 }
 
 void MainWindow::updateDeviceUi(bool opened) {
+    const bool receiverRunning = m_receiverService != nullptr && m_receiverService->isRunning();
+    const unsigned int mode = receiverRunning ? static_cast<unsigned int>(dsa::AppMode::Receiver) : currentAppMode();
+    if (m_openDeviceButton != nullptr) {
+        m_openDeviceButton->setEnabled(mode != static_cast<unsigned int>(dsa::AppMode::Receiver));
+    }
+    if (m_acquisitionPage != nullptr) {
+        m_acquisitionPage->setAppMode(mode);
+    }
     m_homePage->setDeviceStatus(opened);
     m_acquisitionPage->setDeviceOpened(opened);
 }
 
 void MainWindow::updateAcquisitionUi(bool running) {
-    m_toggleAcqButton->setText(running ? "关闭采集" : "开始采集");
+    const bool receiverRunning = m_receiverService != nullptr && m_receiverService->isRunning();
+    const bool senderRunning = m_acquisitionService != nullptr && m_acquisitionService->isRunning();
+    const unsigned int mode =
+        receiverRunning ? static_cast<unsigned int>(dsa::AppMode::Receiver)
+                        : (senderRunning ? static_cast<unsigned int>(dsa::AppMode::Sender) : currentAppMode());
+    const bool isReceiverMode = mode == static_cast<unsigned int>(dsa::AppMode::Receiver);
+    if (m_acquisitionPage != nullptr) {
+        m_acquisitionPage->setAppMode(mode);
+    }
+    m_toggleAcqButton->setText(running ? (isReceiverMode ? "停止接收" : "关闭采集")
+                                       : (isReceiverMode ? "开始接收" : "开始采集"));
     m_acquisitionPage->setAcquisitionRunning(running);
+}
+
+unsigned int MainWindow::currentAppMode() const {
+    if (m_settingsPage == nullptr) {
+        return static_cast<unsigned int>(dsa::AppMode::Sender);
+    }
+    return m_settingsPage->appMode();
 }
 
 void MainWindow::onPlotTick() {

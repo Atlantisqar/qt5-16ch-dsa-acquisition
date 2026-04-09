@@ -6,6 +6,7 @@
 # IDE artifacts
 /.vs/
 /.vscode/
+/.idea/
 *.user
 *.VC.db
 *.opendb
